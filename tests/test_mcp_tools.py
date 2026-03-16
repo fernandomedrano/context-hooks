@@ -214,3 +214,126 @@ class TestMemoTools:
         assert len(result) == 2
         t1 = next(t for t in result if t["thread_id"] == "thread-1")
         assert t1["message_count"] == 2
+
+
+class TestTaskStateTools:
+    def setup_method(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db = ContextDB(self.tmp)
+        self.ctx = {"project_dir": self.tmp, "git_root": self.tmp, "config": {}}
+
+    def teardown_method(self):
+        self.db.close()
+
+    def _handler(self, name):
+        from lib.mcp_tools import build_handlers
+        return build_handlers(self.ctx)[name]
+
+    def test_handoff_task(self):
+        h = self._handler("context_handoff_task")
+        h({"from_agent": "a1", "to_agent": "a2", "title": "Deploy v2",
+           "description": "Run deploy script", "priority": "high"})
+        rows = self.db.query("SELECT subject, content, to_agent FROM memos")
+        assert len(rows) == 1
+        assert rows[0][0] == "[TASK] Deploy v2"
+        content = json.loads(rows[0][1])
+        assert content["description"] == "Run deploy script"
+        assert content["priority"] == "high"
+
+    def test_set_and_get_shared_state(self):
+        set_h = self._handler("context_set_shared_state")
+        get_h = self._handler("context_get_shared_state")
+        set_h({"key": "deploy_status", "value": "in_progress", "updated_by": "agent-1"})
+        result = json.loads(get_h({"key": "deploy_status"}))
+        assert result["key"] == "deploy_status"
+        assert result["value"] == "in_progress"
+
+    def test_get_shared_state_all(self):
+        set_h = self._handler("context_set_shared_state")
+        get_h = self._handler("context_get_shared_state")
+        set_h({"key": "a", "value": "1", "updated_by": "x"})
+        set_h({"key": "b", "value": "2", "updated_by": "y"})
+        result = json.loads(get_h({}))
+        assert len(result) == 2
+
+    def test_get_shared_state_missing(self):
+        get_h = self._handler("context_get_shared_state")
+        result = get_h({"key": "nonexistent"})
+        assert "not found" in result.lower() or "null" in result.lower()
+
+
+class TestQueryTools:
+    def setup_method(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db = ContextDB(self.tmp)
+        self.ctx = {"project_dir": self.tmp, "git_root": self.tmp, "config": {}}
+
+    def teardown_method(self):
+        self.db.close()
+
+    def _handler(self, name):
+        from lib.mcp_tools import build_handlers
+        return build_handlers(self.ctx)[name]
+
+    def test_query_commits_recent(self):
+        self.db.insert_commit(
+            session_id="s1", commit_date="2026-01-01", hash="a" * 40,
+            short_hash="aaaaaaa", author="t@t.com", subject="fix: test",
+            body="", files_changed="a.py", tags="fix", project_dir="/p"
+        )
+        h = self._handler("context_query_commits")
+        result = h({"mode": "recent", "limit": 5})
+        assert "aaaaaaa" in result
+
+    def test_query_commits_search(self):
+        self.db.insert_commit(
+            session_id="s1", commit_date="2026-01-01", hash="b" * 40,
+            short_hash="bbbbbbb", author="t@t.com", subject="feat: add MCP",
+            body="", files_changed="mcp.py", tags="feat", project_dir="/p"
+        )
+        h = self._handler("context_query_commits")
+        result = h({"mode": "search", "term": "MCP"})
+        assert "bbbbbbb" in result
+
+    def test_query_commits_missing_term(self):
+        h = self._handler("context_query_commits")
+        try:
+            result = h({"mode": "search"})
+            assert "required" in result.lower() or "error" in result.lower()
+        except (ValueError, KeyError):
+            pass  # Also acceptable
+
+    def test_check_parity(self):
+        h = self._handler("context_check_parity")
+        result = h({})
+        assert isinstance(result, str)
+
+    def test_get_health(self):
+        h = self._handler("context_get_health")
+        result = h({})
+        assert isinstance(result, str)
+
+    def test_run_xref(self):
+        h = self._handler("context_run_xref")
+        result = h({})
+        assert isinstance(result, str)
+
+    def test_get_profile(self):
+        import subprocess
+        subprocess.run(["git", "init", self.tmp], capture_output=True)
+        subprocess.run(["git", "-C", self.tmp, "commit", "--allow-empty", "-m", "init"],
+                       capture_output=True, env={**os.environ, "GIT_AUTHOR_NAME": "t",
+                       "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                       "GIT_COMMITTER_EMAIL": "t@t"})
+        h = self._handler("context_get_profile")
+        result = json.loads(h({"days": 7}))
+        assert "version" in result
+        assert "parallel_paths" in result
+
+    def test_get_project_context(self):
+        self.db.insert_knowledge(category="reference", title="Test", content="c")
+        self.db.insert_memo(from_agent="a", subject="S", content="C")
+        h = self._handler("context_get_project_context")
+        result = json.loads(h({}))
+        assert "knowledge" in result
+        assert "memos" in result

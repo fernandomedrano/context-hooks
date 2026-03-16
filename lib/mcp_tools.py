@@ -239,4 +239,148 @@ def build_handlers(ctx):
     handlers["context_broadcast"] = context_broadcast
     handlers["context_list_threads"] = context_list_threads
 
+    # ── Task & state tools ───────────────────────────────────────────────
+
+    def context_handoff_task(args):
+        db = _open_db(ctx)
+        try:
+            task_content = json.dumps({
+                "description": args["description"],
+                "relevant_files": args.get("relevant_files", ""),
+                "context": args.get("context", ""),
+                "blockers": args.get("blockers", ""),
+                "priority": args.get("priority", "normal"),
+            })
+            db.insert_memo(
+                from_agent=args["from_agent"],
+                to_agent=args["to_agent"],
+                subject=f"[TASK] {args['title']}",
+                content=task_content,
+                priority=args.get("priority", "normal"),
+            )
+            return f"Task handed off: {args['title']} -> {args['to_agent']}"
+        finally:
+            db.close()
+
+    def context_set_shared_state(args):
+        db = _open_db(ctx)
+        try:
+            db.upsert_shared_state(
+                key=args["key"], value=args["value"], updated_by=args["updated_by"]
+            )
+            return f"State set: {args['key']} = {args['value']}"
+        finally:
+            db.close()
+
+    def context_get_shared_state(args):
+        db = _open_db(ctx)
+        try:
+            key = args.get("key")
+            rows = db.get_shared_state(key)
+            if key:
+                if not rows:
+                    return f"Not found: {key}"
+                r = rows[0]
+                return json.dumps({"key": r[0], "value": r[1], "updated_by": r[2], "updated_at": r[3]})
+            return json.dumps([
+                {"key": r[0], "value": r[1], "updated_by": r[2], "updated_at": r[3]}
+                for r in rows
+            ])
+        finally:
+            db.close()
+
+    handlers["context_handoff_task"] = context_handoff_task
+    handlers["context_set_shared_state"] = context_set_shared_state
+    handlers["context_get_shared_state"] = context_get_shared_state
+
+    # ── Query & analysis tools ───────────────────────────────────────────
+
+    from lib import queries
+
+    _TERM_REQUIRED_MODES = {"search", "tag", "file", "related"}
+
+    def context_query_commits(args):
+        db = _open_db(ctx)
+        try:
+            mode = args["mode"]
+            term = args.get("term")
+            limit = args.get("limit", 20)
+
+            if mode in _TERM_REQUIRED_MODES and not term:
+                raise ValueError(f"'term' is required for mode '{mode}'")
+
+            if mode == "search":
+                return queries.query_search(db, term)
+            elif mode == "tag":
+                return queries.query_tag(db, term)
+            elif mode == "file":
+                return queries.query_file(db, term)
+            elif mode == "bugs":
+                return queries.query_bugs(db)
+            elif mode == "related":
+                return queries.query_related(db, term)
+            elif mode == "recent":
+                return queries.query_recent(db, limit)
+            elif mode == "stats":
+                return queries.query_stats(db)
+            else:
+                raise ValueError(f"Unknown mode: {mode}")
+        finally:
+            db.close()
+
+    def context_check_parity(args):
+        db = _open_db(ctx)
+        try:
+            return queries.query_parity(db)
+        finally:
+            db.close()
+
+    def context_run_xref(args):
+        db = _open_db(ctx)
+        try:
+            from lib.xref import run_xref
+            return run_xref(db, ctx["git_root"], ctx["project_dir"])
+        finally:
+            db.close()
+
+    def context_get_health(args):
+        db = _open_db(ctx)
+        try:
+            from lib.health import health_summary
+            result = health_summary(db, ctx["git_root"], ctx["project_dir"], ctx["config"])
+            return result or "No health issues detected."
+        finally:
+            db.close()
+
+    def context_get_profile(args):
+        from lib.tags import generate_profile, save_profile
+        days = args.get("days", 30)
+        profile = generate_profile(ctx["git_root"], days=days)
+        save_profile(ctx["project_dir"], profile)
+        return json.dumps(profile)
+
+    def context_get_project_context(args):
+        db = _open_db(ctx)
+        try:
+            result = {}
+            if args.get("include_health", True):
+                from lib.health import health_summary
+                result["health"] = health_summary(db, ctx["git_root"], ctx["project_dir"], ctx["config"]) or "OK"
+            if args.get("include_memos", True):
+                result["memos"] = knowledge.list_memos(db, unread_only=True)
+            if args.get("include_knowledge", True):
+                limit = args.get("knowledge_limit", 10)
+                entries = knowledge.list_entries(db)
+                result["knowledge"] = entries[:limit]
+            return json.dumps(result)
+        finally:
+            db.close()
+
+    handlers["context_query_commits"] = context_query_commits
+    handlers["context_check_parity"] = context_check_parity
+    handlers["context_run_xref"] = context_run_xref
+    handlers["context_get_health"] = context_get_health
+    handlers["context_get_profile"] = context_get_profile
+    handlers["context_get_project_context"] = context_get_project_context
+
     return handlers

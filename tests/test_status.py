@@ -12,7 +12,7 @@ class TestStatus:
         self.db.close()
 
     def test_status_empty_db(self):
-        result = show_status(self.db, self.tmp, "/fake/project")
+        result = show_status(self.db, self.db, self.tmp, "/fake/project")
         assert "context-hooks status" in result
         assert "/fake/project" in result
         assert "events" in result
@@ -28,7 +28,7 @@ class TestStatus:
             short_hash="xxxxxxx", author="t@t.com", subject="test commit",
             body="", files_changed="a.py", tags="test", project_dir="/p"
         )
-        result = show_status(self.db, self.tmp, "/fake/project")
+        result = show_status(self.db, self.db, self.tmp, "/fake/project")
         assert "file_read" in result
         assert "xxxxxxx" in result
         assert "test commit" in result

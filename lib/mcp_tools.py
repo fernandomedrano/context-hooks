@@ -124,4 +124,119 @@ def build_handlers(ctx):
     handlers["context_restore_knowledge"] = context_restore_knowledge
     handlers["context_supersede_knowledge"] = context_supersede_knowledge
 
+    # ── Memo tools ───────────────────────────────────────────────────────
+
+    def context_send_memo(args):
+        db = _open_db(ctx)
+        try:
+            knowledge.send_memo(
+                db, args["from_agent"], args["subject"], args["content"],
+                to_agent=args.get("to_agent", "*"),
+                expires_at=args.get("expires_at"),
+            )
+            return f"Memo sent: {args['subject']}"
+        finally:
+            db.close()
+
+    def context_check_memos(args):
+        db = _open_db(ctx)
+        try:
+            to_agent = args.get("to_agent")
+            unread_only = args.get("unread_only", False)
+            if to_agent:
+                sql = ("SELECT id, from_agent, to_agent, subject, content, created_at, read, expires_at "
+                       "FROM memos WHERE (to_agent = ? OR to_agent = '*')")
+                params = [to_agent]
+                if unread_only:
+                    sql += " AND read = 0"
+                sql += " ORDER BY id ASC"
+                rows = db.query(sql, tuple(params))
+                result = [
+                    {"id": r[0], "from_agent": r[1], "to_agent": r[2], "subject": r[3],
+                     "content": r[4], "created_at": r[5], "read": r[6], "expires_at": r[7]}
+                    for r in rows
+                ]
+            else:
+                result = knowledge.list_memos(db, unread_only=unread_only)
+            return json.dumps(result)
+        finally:
+            db.close()
+
+    def context_read_memo(args):
+        db = _open_db(ctx)
+        try:
+            memo = knowledge.read_memo(db, args["id"])
+            return json.dumps(memo)
+        finally:
+            db.close()
+
+    def context_reply_memo(args):
+        db = _open_db(ctx)
+        try:
+            memo_id = args["memo_id"]
+            rows = db.query(
+                "SELECT id, from_agent, to_agent, subject, thread_id FROM memos WHERE id = ?",
+                (memo_id,)
+            )
+            if not rows:
+                raise ValueError(f"Memo {memo_id} not found")
+            orig = rows[0]
+            orig_from = orig[1]
+            orig_subject = orig[3]
+            thread_id = orig[4]
+            if not thread_id:
+                thread_id = f"thread-{memo_id}"
+                db.execute("UPDATE memos SET thread_id = ? WHERE id = ?", (thread_id, memo_id))
+            db.insert_memo(
+                from_agent=args["from_agent"],
+                to_agent=orig_from,
+                subject=f"Re: {orig_subject}",
+                content=args["content"],
+                thread_id=thread_id,
+            )
+            return f"Replied to memo {memo_id} in {thread_id}"
+        finally:
+            db.close()
+
+    def context_broadcast(args):
+        db = _open_db(ctx)
+        try:
+            db.insert_memo(
+                from_agent=args["from_agent"],
+                to_agent="*",
+                subject=args["subject"],
+                content=args["content"],
+                priority=args.get("priority", "normal"),
+            )
+            return f"Broadcast sent: {args['subject']}"
+        finally:
+            db.close()
+
+    def context_list_threads(args):
+        db = _open_db(ctx)
+        try:
+            limit = args.get("limit", 20)
+            rows = db.query(
+                "SELECT thread_id, MIN(subject), GROUP_CONCAT(DISTINCT from_agent), "
+                "COUNT(*), MAX(created_at) "
+                "FROM memos WHERE thread_id IS NOT NULL "
+                "GROUP BY thread_id ORDER BY MAX(created_at) DESC LIMIT ?",
+                (limit,)
+            )
+            result = [
+                {"thread_id": r[0], "subject": r[1], "participants": r[2].split(","),
+                 "message_count": r[3], "last_activity": r[4]}
+                for r in rows
+            ]
+            return json.dumps(result)
+        finally:
+            db.close()
+
+    handlers["context_send_memo"] = context_send_memo
+    handlers["context_check_memos"] = context_check_memos
+    handlers["context_read_memo"] = context_read_memo
+    handlers["context_reply_memo"] = context_reply_memo
+    handlers["context_broadcast"] = context_broadcast
+    handlers["context_list_threads"] = context_list_threads
+
     return handlers

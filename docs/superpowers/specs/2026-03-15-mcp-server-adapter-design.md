@@ -10,7 +10,7 @@ Add a universal MCP (Model Context Protocol) stdio server to context-hooks, expo
 
 ## Decisions
 
-1. **Full surface** — Expose all agent-bridge tools (14) plus all context-hooks unique capabilities (6 additional tools). Total: ~21 tools.
+1. **Full surface** — Expose all agent-bridge tools (14) plus all context-hooks unique capabilities (9 additional tools). Total: 23 tools.
 2. **Per-project** — One MCP server instance per project. Project resolved from cwd/git root at startup. No per-call project parameter.
 3. **Zero external dependencies** — Thin MCP shim using only Python stdlib. No FastMCP, no pip.
 4. **`context_` prefix** for native tool names. Agent-bridge aliases (`store_knowledge`, `send_memo`, etc.) registered behind `--compat=agent-bridge` flag.
@@ -41,19 +41,19 @@ bin/context-hooks mcp [--compat=agent-bridge] [--project=/path]
 
 Minimal MCP stdio server implementing JSON-RPC 2.0:
 
-- Reads newline-delimited JSON from stdin
+- Uses **Content-Length header framing** (LSP-style), not newline-delimited JSON. This matches the MCP stdio transport spec that Claude Code, Codex, and other MCP clients expect. Format: `Content-Length: N\r\n\r\n{json}`.
 - Dispatches to registered tool handlers
-- Writes JSON responses to stdout
+- Writes JSON responses to stdout (same Content-Length framing)
 - Logs diagnostics to stderr (stdout is protocol-only)
 
 Supported methods:
 - `initialize` — Server info + capabilities
-- `notifications/initialized` — Client ready acknowledgment
+- `notifications/initialized` — Client ready acknowledgment (no response)
 - `tools/list` — Returns all registered tool schemas
-- `tools/call` — Dispatches to handler, returns `{content: [{type: "text", text: ...}]}` or `{isError: true, content: [...]}`
-- `ping` — Heartbeat
+- `tools/call` — Dispatches to handler, returns `{content: [{type: "text", text: ...}]}` or `{isError: true, content: [{type: "text", text: "error message"}]}`
+- `ping` — Heartbeat (returns `{}`)
 
-No async. No framework. Synchronous `while True` loop with `sys.stdin.readline()`.
+No async. No framework. Synchronous `while True` loop reading Content-Length framed messages from stdin.
 
 The shim exposes a registration API:
 ```python
@@ -63,18 +63,37 @@ def register_tool(name, description, input_schema, handler):
 
 ## Tool Registry — `lib/mcp_tools.py`
 
-### Knowledge tools (6)
+### Handler initialization pattern
+
+All handlers receive a shared context object initialized at server startup:
+
+```python
+ctx = {
+    "project_dir": data_dir(git_root),   # resolved once at startup
+    "git_root": git_root,                 # for queries, xref, health
+    "config": load_config(project_dir),   # for health, nudges
+}
+```
+
+**DB connection lifecycle:** Open a fresh `ContextDB` per tool call, close after. This avoids WAL lock contention with concurrent CLI or hook processes writing to the same DB. The overhead is negligible (~1ms per open) compared to the MCP round-trip latency.
+
+### Knowledge tools (8)
 
 | Tool name | Compat alias | Description | Handler |
 |---|---|---|---|
 | `context_store_knowledge` | `store_knowledge` | Store a knowledge entry with category, title, content, optional reasoning/tags | `knowledge.store()` |
 | `context_search_knowledge` | `search_knowledge` | FTS5 search over knowledge entries | `knowledge.search()` |
-| `context_get_knowledge` | `get_knowledge` | Get a specific entry by category + title | `knowledge.list_entries()` filtered |
+| `context_get_knowledge` | `get_knowledge` | Get a specific entry by title (active entries only) | New: direct DB query by title |
 | `context_list_knowledge` | `list_knowledge` | List all entries, optionally by category | `knowledge.list_entries()` |
 | `context_promote_knowledge` | — | Advance maturity: signal → pattern → decision → convention | `knowledge.promote()` |
 | `context_archive_knowledge` | — | Archive an entry (soft delete) | `knowledge.archive()` |
+| `context_restore_knowledge` | — | Restore an archived or dismissed entry to active | `knowledge.restore()` |
+| `context_supersede_knowledge` | — | Replace an entry with a new one, preserving lineage | `knowledge.supersede()` |
 
 #### `context_store_knowledge` schema
+
+Entries are created at `maturity=decision` by default. Use `context_promote_knowledge` to advance through signal → pattern → decision → convention. The `maturity` parameter allows agents to store signals or patterns explicitly when the evidence bar is lower.
+
 ```json
 {
   "type": "object",
@@ -87,6 +106,12 @@ def register_tool(name, description, input_schema, handler):
     "title": { "type": "string", "description": "Short, descriptive title" },
     "content": { "type": "string", "description": "Full content (markdown supported)" },
     "reasoning": { "type": "string", "description": "Why this knowledge matters" },
+    "maturity": {
+      "type": "string",
+      "enum": ["signal", "pattern", "decision", "convention"],
+      "default": "decision",
+      "description": "Evidence level (default: decision)"
+    },
     "bug_refs": { "type": "string", "description": "Comma-separated bug IDs (e.g. BUG-082,BUG-091)" },
     "file_refs": { "type": "string", "description": "Comma-separated file paths" },
     "tags": { "type": "string", "description": "Comma-separated tags" }
@@ -108,11 +133,14 @@ def register_tool(name, description, input_schema, handler):
 ```
 
 #### `context_get_knowledge` schema
+
+Retrieves a specific entry by exact title match. Returns only active entries (use `context_list_knowledge` with `status` param to find archived/superseded). Implemented as a direct DB query: `SELECT ... FROM knowledge WHERE title = ? AND status = 'active'`, not via `list_entries()`.
+
 ```json
 {
   "type": "object",
   "properties": {
-    "category": { "type": "string", "description": "Category to filter by" },
+    "category": { "type": "string", "description": "Category to filter by (optional, narrows search)" },
     "title": { "type": "string", "description": "Exact title to retrieve" }
   },
   "required": ["title"]
@@ -152,6 +180,36 @@ def register_tool(name, description, input_schema, handler):
 }
 ```
 
+#### `context_restore_knowledge` schema
+```json
+{
+  "type": "object",
+  "properties": {
+    "id": { "type": "integer", "description": "Knowledge entry ID to restore to active" }
+  },
+  "required": ["id"]
+}
+```
+
+#### `context_supersede_knowledge` schema
+```json
+{
+  "type": "object",
+  "properties": {
+    "old_id": { "type": "integer", "description": "ID of the entry being replaced" },
+    "category": {
+      "type": "string",
+      "enum": ["architectural-decision", "coding-convention", "failure-class", "reference", "rejected-approach"],
+      "description": "Category of the replacement entry"
+    },
+    "title": { "type": "string", "description": "Title of the replacement entry" },
+    "content": { "type": "string", "description": "Content of the replacement entry" },
+    "reasoning": { "type": "string", "description": "Why this supersedes the old entry" }
+  },
+  "required": ["old_id", "category", "title", "content"]
+}
+```
+
 ### Memo tools (6)
 
 | Tool name | Compat alias | Description | Handler |
@@ -179,12 +237,15 @@ def register_tool(name, description, input_schema, handler):
 ```
 
 #### `context_check_memos` schema
+
+The `to_agent` filter is implemented as a new query in the handler (the existing `list_memos()` only supports `unread_only`). Query: `SELECT ... FROM memos WHERE to_agent = ? OR to_agent = '*'` with optional `AND read = 0`.
+
 ```json
 {
   "type": "object",
   "properties": {
     "unread_only": { "type": "boolean", "description": "Only show unread memos", "default": false },
-    "to_agent": { "type": "string", "description": "Filter by recipient (optional)" }
+    "to_agent": { "type": "string", "description": "Filter by recipient — includes direct + broadcast memos (optional)" }
   }
 }
 ```
@@ -201,6 +262,14 @@ def register_tool(name, description, input_schema, handler):
 ```
 
 #### `context_reply_memo` schema
+
+**Thread mechanics:** When replying to memo N:
+1. Look up memo N's `thread_id`. If it has one, reuse it.
+2. If memo N has no `thread_id`, generate one: `thread-{memo_N_id}` and retroactively update memo N's `thread_id` to this value.
+3. Insert the reply memo with the same `thread_id`, `to_agent` = original memo's `from_agent`, `subject` = `"Re: {original_subject}"`.
+
+This ensures threads are created lazily — a memo only gets a `thread_id` when someone replies to it.
+
 ```json
 {
   "type": "object",
@@ -214,6 +283,9 @@ def register_tool(name, description, input_schema, handler):
 ```
 
 #### `context_broadcast` schema
+
+Priority is stored by adding a `priority` column to the `memos` table (see Schema Changes below). Broadcasts are sent with `to_agent='*'`.
+
 ```json
 {
   "type": "object",
@@ -228,6 +300,9 @@ def register_tool(name, description, input_schema, handler):
 ```
 
 #### `context_list_threads` schema
+
+Groups memos by `thread_id` (non-null only). Returns each thread's ID, subject (from first memo), participant list, message count, and last activity timestamp. Query: `SELECT thread_id, MIN(subject), GROUP_CONCAT(DISTINCT from_agent), COUNT(*), MAX(created_at) FROM memos WHERE thread_id IS NOT NULL GROUP BY thread_id ORDER BY MAX(created_at) DESC LIMIT ?`.
+
 ```json
 {
   "type": "object",
@@ -298,6 +373,16 @@ def register_tool(name, description, input_schema, handler):
 | `context_get_project_context` | `get_context_for_project` | Composite: health + unread memos + recent knowledge | Composite handler |
 
 #### `context_query_commits` schema
+
+Mode-specific `term` requirements:
+- `search` — **required**: search string
+- `tag` — **required**: tag name
+- `file` — **required**: file path (partial match)
+- `related` — **required**: commit hash prefix
+- `bugs`, `recent`, `stats` — `term` ignored
+
+Returns error if `term` is missing for modes that require it.
+
 ```json
 {
   "type": "object",
@@ -307,7 +392,7 @@ def register_tool(name, description, input_schema, handler):
       "enum": ["search", "tag", "file", "bugs", "related", "recent", "stats"],
       "description": "Query mode"
     },
-    "term": { "type": "string", "description": "Search term, tag name, file path, or commit hash (depends on mode)" },
+    "term": { "type": "string", "description": "Search term, tag name, file path, or commit hash (required for search/tag/file/related modes)" },
     "limit": { "type": "integer", "description": "Max results (for recent mode)", "default": 20 }
   },
   "required": ["mode"]
@@ -339,11 +424,14 @@ def register_tool(name, description, input_schema, handler):
 ```
 
 #### `context_get_profile` schema
+
+This tool **regenerates** the profile by calling `tags.generate_profile()` (which runs `git log`), not `load_profile()` (which reads a cached file). This ensures fresh data but may take a few seconds in large repos. The profile is also saved to disk as a side effect.
+
 ```json
 {
   "type": "object",
   "properties": {
-    "days": { "type": "integer", "description": "Days of history to analyze", "default": 30 }
+    "days": { "type": "integer", "description": "Days of git history to analyze", "default": 30 }
   }
 }
 ```
@@ -363,7 +451,7 @@ def register_tool(name, description, input_schema, handler):
 
 ## Schema Changes — `lib/db.py`
 
-One new table:
+### New table: `shared_state`
 
 ```sql
 CREATE TABLE IF NOT EXISTS shared_state (
@@ -374,7 +462,17 @@ CREATE TABLE IF NOT EXISTS shared_state (
 );
 ```
 
-Two new methods on `ContextDB`:
+### Modified table: `memos`
+
+Add `priority` column:
+
+```sql
+ALTER TABLE memos ADD COLUMN priority TEXT DEFAULT 'normal';
+```
+
+Note: Since SQLite doesn't support `ALTER TABLE ADD COLUMN IF NOT EXISTS`, the migration must check if the column already exists before adding it. Use `PRAGMA table_info(memos)` to check.
+
+### New methods on `ContextDB`:
 
 ```python
 def upsert_shared_state(self, *, key, value, updated_by):
@@ -382,7 +480,15 @@ def upsert_shared_state(self, *, key, value, updated_by):
 
 def get_shared_state(self, key=None):
     """Get one key or all shared state."""
+
+def delete_shared_state(self, key):
+    """Remove a shared state key."""
 ```
+
+### Modified methods:
+
+- `insert_memo()` — Accept optional `priority` parameter (default `'normal'`)
+- `knowledge.store()` — Accept optional `maturity` parameter (default `'decision'`)
 
 ## Entry Point — `bin/context-hooks`
 
@@ -394,8 +500,9 @@ mcp)  python3 "$SCRIPT_DIR/lib/mcp_tools.py" "$@" ;;
 
 `lib/mcp_tools.py` has a `__main__` block that:
 1. Parses `--compat` and `--project` flags
-2. Registers all tools (+ aliases if compat mode)
-3. Calls `mcp.serve()` to start the stdio loop
+2. Resolves project: `--project` takes precedence over cwd. If `--project` is given, use it directly (no git root detection). If omitted, resolve git root from cwd.
+3. Registers all tools (+ aliases if compat mode)
+4. Calls `mcp.serve()` to start the stdio loop
 
 ## Agent-Bridge Compatibility
 
@@ -444,11 +551,12 @@ Both native and alias names appear in `tools/list`. An agent calling `store_know
 | File | Change type |
 |---|---|
 | `lib/mcp.py` | **New** — Protocol shim (~200 lines) |
-| `lib/mcp_tools.py` | **New** — Tool registry + handlers (~500 lines) |
-| `lib/db.py` | **Modified** — Add `shared_state` table + methods |
+| `lib/mcp_tools.py` | **New** — Tool registry + handlers (~600-700 lines) |
+| `lib/db.py` | **Modified** — Add `shared_state` table, `priority` column on memos, new methods |
+| `lib/knowledge.py` | **Modified** — Accept optional `maturity` param in `store()` |
 | `bin/context-hooks` | **Modified** — Add `mcp)` case |
 | `tests/test_mcp.py` | **New** — Protocol tests |
 | `tests/test_mcp_tools.py` | **New** — Tool handler tests |
-| `tests/test_db.py` | **Modified** — Add shared_state tests |
+| `tests/test_db.py` | **Modified** — Add shared_state + priority tests |
 
-No existing behavior changes. All additions are additive.
+No existing behavior changes. All additions are additive. The `maturity` param in `store()` defaults to `'decision'` preserving current behavior.

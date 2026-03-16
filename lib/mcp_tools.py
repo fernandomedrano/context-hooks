@@ -348,13 +348,15 @@ def build_handlers(ctx):
             db.close()
 
     def context_get_health(args):
-        db = _open_cluster_db(ctx)
+        local_db = _open_local_db(ctx)
+        cluster_db = _open_cluster_db(ctx)
         try:
             from lib.health import health_summary
-            result = health_summary(db, ctx["git_root"], ctx["project_dir"], ctx["config"])
+            result = health_summary(local_db, cluster_db, ctx["git_root"], ctx["project_dir"], ctx["config"])
             return result or "No health issues detected."
         finally:
-            db.close()
+            local_db.close()
+            cluster_db.close()
 
     def context_get_profile(args):
         from lib.tags import generate_profile, save_profile
@@ -370,7 +372,7 @@ def build_handlers(ctx):
             result = {}
             if args.get("include_health", True):
                 from lib.health import health_summary
-                result["health"] = health_summary(cluster_db, ctx["git_root"], ctx["project_dir"], ctx["config"]) or "OK"
+                result["health"] = health_summary(local_db, cluster_db, ctx["git_root"], ctx["project_dir"], ctx["config"]) or "OK"
             if args.get("include_memos", True):
                 result["memos"] = knowledge.list_memos(cluster_db, unread_only=True)
             if args.get("include_knowledge", True):

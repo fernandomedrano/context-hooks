@@ -14,12 +14,12 @@ class TestHealthSummary:
 
     def test_returns_none_when_healthy(self):
         """No issues = no summary."""
-        result = health_summary(self.db, "/p", self.tmp, {})
+        result = health_summary(self.db, self.db, "/p", self.tmp, {})
         assert result is None
 
     def test_shows_unread_memos(self):
         self.db.insert_memo(from_agent="s1", subject="Test", content="content")
-        result = health_summary(self.db, "/p", self.tmp, {})
+        result = health_summary(self.db, self.db, "/p", self.tmp, {})
         assert result is not None
         assert "memo" in result.lower()
 
@@ -29,13 +29,13 @@ class TestHealthSummary:
             author="t@t.com", subject="fix: BUG-999", body="",
             files_changed="x.py", tags="fix,BUG-999", project_dir="/p"
         )
-        result = health_summary(self.db, "/p", self.tmp, {})
+        result = health_summary(self.db, self.db, "/p", self.tmp, {})
         assert result is not None
         assert "BUG" in result
 
     def test_disabled_returns_none(self):
         self.db.insert_memo(from_agent="s1", subject="Test", content="c")
-        result = health_summary(self.db, "/p", self.tmp, {"nudge.health-summary": False})
+        result = health_summary(self.db, self.db, "/p", self.tmp, {"nudge.health-summary": False})
         assert result is None
 
     def test_shows_stale_rules(self):
@@ -45,7 +45,7 @@ class TestHealthSummary:
             "match_count, first_seen, status) VALUES (?, ?, ?, ?, ?, 'active')",
             ("Schema sync", "abc123", "2025-01-01T00:00:00", 5, "2025-01-01T00:00:00"),
         )
-        result = health_summary(self.db, "/p", self.tmp, {})
+        result = health_summary(self.db, self.db, "/p", self.tmp, {})
         assert result is not None
         assert "Schema sync" in result
 
@@ -57,7 +57,7 @@ class TestHealthSummary:
             author="t@t.com", subject="fix: BUG-001", body="",
             files_changed="x.py", tags="fix,BUG-001", project_dir="/p"
         )
-        result = health_summary(self.db, "/p", self.tmp, {})
+        result = health_summary(self.db, self.db, "/p", self.tmp, {})
         assert result is not None
         assert "memo" in result.lower()
         assert "BUG" in result
@@ -75,7 +75,7 @@ class TestPrune:
         self.db.insert_memo(from_agent="s1", subject="Old", content="c")
         # Mark as read and backdate
         self.db.execute("UPDATE memos SET read = 1, created_at = '2025-01-01T00:00:00'")
-        report = prune(self.db, "/p", self.tmp, dry_run=True)
+        report = prune(self.db, self.db, "/p", self.tmp, dry_run=True)
         assert "memo" in report.lower() or "prune" in report.lower()
         # Should still exist
         count = self.db.query("SELECT COUNT(*) FROM memos")[0][0]
@@ -84,7 +84,7 @@ class TestPrune:
     def test_prune_deletes_old_read_memos(self):
         self.db.insert_memo(from_agent="s1", subject="Old", content="c")
         self.db.execute("UPDATE memos SET read = 1, created_at = '2025-01-01T00:00:00'")
-        prune(self.db, "/p", self.tmp, dry_run=False)
+        prune(self.db, self.db, "/p", self.tmp, dry_run=False)
         count = self.db.query("SELECT COUNT(*) FROM memos")[0][0]
         assert count == 0
 
@@ -92,7 +92,7 @@ class TestPrune:
         """Unread memos should NOT be deleted even if old."""
         self.db.insert_memo(from_agent="s1", subject="Important", content="c")
         self.db.execute("UPDATE memos SET created_at = '2025-01-01T00:00:00'")
-        prune(self.db, "/p", self.tmp, dry_run=False)
+        prune(self.db, self.db, "/p", self.tmp, dry_run=False)
         count = self.db.query("SELECT COUNT(*) FROM memos")[0][0]
         assert count == 1
 
@@ -103,13 +103,13 @@ class TestPrune:
             "match_count, first_seen, status) VALUES (?, ?, ?, ?, ?, 'active')",
             ("Old rule", "hash1", "2025-01-01T00:00:00", 3, "2025-01-01T00:00:00"),
         )
-        prune(self.db, "/p", self.tmp, dry_run=False)
+        prune(self.db, self.db, "/p", self.tmp, dry_run=False)
         rows = self.db.query("SELECT status FROM rule_validations WHERE rule_hash = 'hash1'")
         assert rows[0][0] == "stale"
 
     def test_prune_report_always_returns_string(self):
         """Even with empty DB, prune should return a report string."""
-        report = prune(self.db, "/p", self.tmp, dry_run=True)
+        report = prune(self.db, self.db, "/p", self.tmp, dry_run=True)
         assert isinstance(report, str)
         assert "PRUNE REPORT" in report
 
@@ -118,6 +118,43 @@ class TestPrune:
         self.db.insert_memo(from_agent="s1", subject="Recent", content="c")
         self.db.execute("UPDATE memos SET read = 1")
         # created_at is recent (just now), so should not be pruned
-        prune(self.db, "/p", self.tmp, dry_run=False)
+        prune(self.db, self.db, "/p", self.tmp, dry_run=False)
         count = self.db.query("SELECT COUNT(*) FROM memos")[0][0]
         assert count == 1
+
+
+class TestClusterHealthRouting:
+    def test_health_summary_reads_memos_from_cluster_db(self):
+        """health_summary should count unread memos from cluster_db."""
+        master_root = tempfile.mkdtemp()
+        from lib.db import data_dir
+        master_dir = data_dir(master_root)
+        cluster_db = ContextDB(master_dir)
+        local_db = ContextDB(tempfile.mkdtemp())
+
+        cluster_db.insert_memo(from_agent="x", subject="Unread", content="c")
+
+        result = health_summary(local_db, cluster_db, "/fake/root", master_dir, {})
+        assert result is not None
+        assert "unread" in result.lower()
+        local_db.close()
+        cluster_db.close()
+
+    def test_prune_deletes_memos_from_cluster_db(self):
+        """prune should delete old memos from cluster_db, not local_db."""
+        master_root = tempfile.mkdtemp()
+        from lib.db import data_dir
+        master_dir = data_dir(master_root)
+        cluster_db = ContextDB(master_dir)
+        local_db = ContextDB(tempfile.mkdtemp())
+
+        cluster_db.execute(
+            "INSERT INTO memos (from_agent, subject, content, created_at, read) VALUES (?,?,?,?,?)",
+            ("x", "Old", "c", "2020-01-01T00:00:00", 1)
+        )
+
+        result = prune(local_db, cluster_db, "/fake/root", master_dir, dry_run=False)
+        remaining = cluster_db.query("SELECT COUNT(*) FROM memos")
+        assert remaining[0][0] == 0
+        local_db.close()
+        cluster_db.close()

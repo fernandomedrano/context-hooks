@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export CONTEXT_HOOKS_HOME="$SCRIPT_DIR"
+export PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}"
 
 CMD="${1:-help}"
 shift 2>/dev/null || true

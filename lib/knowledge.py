@@ -124,12 +124,55 @@ def supersede(db, old_id, new_category, new_title, new_content, new_reasoning=No
 
 # --- Memo functions ---
 
-def send_memo(db, from_agent, subject, content, to_agent='*', expires_at=None):
+def send_memo(db, from_agent, subject, content, to_agent='*', expires_at=None, priority='normal'):
     """Send a cross-session memo."""
     db.insert_memo(
         from_agent=from_agent, subject=subject, content=content,
-        to_agent=to_agent, expires_at=expires_at
+        to_agent=to_agent, expires_at=expires_at, priority=priority
     )
+
+
+def parse_memo_send_args(args):
+    """Parse memo send arguments — supports both flag and positional syntax.
+
+    Flag syntax:  --from X --subject Y --content Z [--to T] [--priority P] [--project PATH]
+    Positional:   <from> <subject> <content>
+
+    Returns dict with keys: from_agent, subject, content, to_agent, priority, project
+    """
+    # Detect flag syntax: first arg starts with --
+    if args and args[0].startswith('--'):
+        import argparse
+        parser = argparse.ArgumentParser(prog='memo send')
+        parser.add_argument('--from', dest='from_agent', required=True)
+        parser.add_argument('--subject', required=True)
+        parser.add_argument('--content', required=True)
+        parser.add_argument('--to', dest='to_agent', default='*')
+        parser.add_argument('--priority', default='normal')
+        parser.add_argument('--project', default=None)
+        parsed = parser.parse_args(args)
+        return {
+            'from_agent': parsed.from_agent,
+            'subject': parsed.subject,
+            'content': parsed.content,
+            'to_agent': parsed.to_agent,
+            'priority': parsed.priority,
+            'project': parsed.project,
+        }
+    else:
+        # Positional syntax: <from> <subject> <content>
+        if len(args) < 3:
+            print("Usage: memo send --from FROM --subject SUBJECT --content CONTENT [--to TO] [--priority P] [--project PATH]")
+            print("   or: memo send <from> <subject> <content>")
+            sys.exit(1)
+        return {
+            'from_agent': args[0],
+            'subject': args[1],
+            'content': args[2],
+            'to_agent': '*',
+            'priority': 'normal',
+            'project': None,
+        }
 
 
 def list_memos(db, unread_only=False):
@@ -270,10 +313,17 @@ def main(args):
                 print("Usage: knowledge memo <send|list|read> [args]"); sys.exit(1)
             subcmd = args[1]
             if subcmd == 'send':
-                if len(args) < 5:
-                    print("Usage: knowledge memo send <from> <subject> <content>"); sys.exit(1)
-                send_memo(db, args[2], args[3], args[4])
-                print(f"Memo sent: {args[3]}")
+                parsed = parse_memo_send_args(args[2:])
+                if parsed['project']:
+                    target_db = ContextDB(get_data_dir(parsed['project']))
+                else:
+                    target_db = db
+                send_memo(target_db, parsed['from_agent'], parsed['subject'],
+                          parsed['content'], to_agent=parsed['to_agent'],
+                          priority=parsed['priority'])
+                if parsed['project'] and target_db is not db:
+                    target_db.close()
+                print(f"Memo sent: {parsed['subject']}")
             elif subcmd == 'list':
                 unread = '--unread' in args
                 memos = list_memos(db, unread_only=unread)

@@ -3,7 +3,11 @@ import sqlite3
 import hashlib
 import os
 
+CURRENT_SCHEMA_VERSION = 2
+
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
+
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL,
@@ -145,7 +149,41 @@ class ContextDB:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+        self._migrate()
         self.db_path = db_path
+
+    def _migrate(self):
+        """Run schema migrations based on version tracking."""
+        rows = self.conn.execute("SELECT version FROM schema_version").fetchall()
+        if not rows:
+            # Detect if this is a pre-versioned DB (has tables but no version row)
+            tables = [r[0] for r in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()]
+            if 'memos' in tables:
+                # Existing DB without versioning — start at v1
+                version = 1
+            else:
+                # Brand new DB — apply full schema, set to current version
+                version = 0
+            self.conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+            self.conn.commit()
+        else:
+            version = rows[0][0]
+
+        if version < 2:
+            self._migrate_v1_to_v2()
+            self.conn.execute("UPDATE schema_version SET version = ?", (CURRENT_SCHEMA_VERSION,))
+            self.conn.commit()
+
+    def _migrate_v1_to_v2(self):
+        """v1 → v2: add priority column to memos, add shared_state table."""
+        # Check if priority column already exists (idempotent)
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(memos)").fetchall()]
+        if 'priority' not in cols:
+            self.conn.execute("ALTER TABLE memos ADD COLUMN priority TEXT DEFAULT 'normal'")
+        # shared_state is handled by CREATE TABLE IF NOT EXISTS in SCHEMA
+        self.conn.commit()
 
     def query(self, sql: str, params: tuple = ()) -> list:
         """Execute a read query and return all rows."""

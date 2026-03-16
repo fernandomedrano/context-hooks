@@ -209,6 +209,161 @@ class TestContextDB:
         assert rows[0] == ("FYI", "normal")
 
 
+class TestSchemaMigration:
+    """Tests for automatic schema migration when opening older DBs."""
+
+    def _create_v1_db(self, tmp_dir):
+        """Create a DB with v1 schema (no priority column, no shared_state table)."""
+        import sqlite3
+        db_path = os.path.join(tmp_dir, "context.db")
+        conn = sqlite3.connect(db_path)
+        conn.executescript("""
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now','localtime')),
+                category TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                priority INTEGER NOT NULL DEFAULT 3,
+                data TEXT NOT NULL,
+                project_dir TEXT NOT NULL
+            );
+            CREATE TABLE commits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now','localtime')),
+                commit_date TEXT,
+                hash TEXT NOT NULL UNIQUE,
+                short_hash TEXT NOT NULL,
+                author TEXT,
+                subject TEXT NOT NULL,
+                body TEXT,
+                files_changed TEXT,
+                tags TEXT,
+                project_dir TEXT NOT NULL
+            );
+            CREATE TABLE knowledge (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                maturity TEXT DEFAULT 'signal',
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                reasoning TEXT,
+                status TEXT DEFAULT 'active',
+                superseded_by INTEGER,
+                bug_refs TEXT,
+                file_refs TEXT,
+                commit_refs TEXT,
+                tags TEXT,
+                evidence_count INTEGER DEFAULT 0,
+                last_validated TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(title, status)
+            );
+            CREATE TABLE memos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_agent TEXT NOT NULL,
+                to_agent TEXT DEFAULT '*',
+                subject TEXT NOT NULL,
+                content TEXT NOT NULL,
+                thread_id TEXT,
+                created_at TEXT NOT NULL,
+                read INTEGER DEFAULT 0,
+                expires_at TEXT
+            );
+            CREATE TABLE rule_validations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_name TEXT NOT NULL,
+                rule_hash TEXT NOT NULL UNIQUE,
+                last_validated TEXT,
+                match_count INTEGER DEFAULT 0,
+                first_seen TEXT NOT NULL,
+                status TEXT DEFAULT 'active'
+            );
+            CREATE VIRTUAL TABLE knowledge_fts USING fts5(
+                title, content, reasoning,
+                content=knowledge, content_rowid=id
+            );
+        """)
+        # Insert a memo without priority column to verify data survives migration
+        conn.execute(
+            "INSERT INTO memos (from_agent, to_agent, subject, content, created_at, read) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("agent-1", "*", "Old memo", "Pre-migration content", "2026-01-01T00:00:00", 0)
+        )
+        conn.commit()
+        conn.close()
+
+    def test_v1_db_gets_priority_column(self):
+        """Opening a v1 DB should add the priority column to memos."""
+        tmp = tempfile.mkdtemp()
+        self._create_v1_db(tmp)
+        db = ContextDB(tmp)
+        # priority column should exist and default to 'normal'
+        rows = db.query("SELECT priority FROM memos")
+        assert rows[0][0] == "normal"
+        db.close()
+
+    def test_v1_db_gets_shared_state_table(self):
+        """Opening a v1 DB should create the shared_state table."""
+        tmp = tempfile.mkdtemp()
+        self._create_v1_db(tmp)
+        db = ContextDB(tmp)
+        tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='shared_state'")
+        assert len(tables) == 1
+        db.close()
+
+    def test_v1_memo_data_survives_migration(self):
+        """Existing memo data should be intact after migration."""
+        tmp = tempfile.mkdtemp()
+        self._create_v1_db(tmp)
+        db = ContextDB(tmp)
+        rows = db.query("SELECT from_agent, subject, content FROM memos")
+        assert len(rows) == 1
+        assert rows[0] == ("agent-1", "Old memo", "Pre-migration content")
+        db.close()
+
+    def test_v1_db_can_insert_memo_with_priority_after_migration(self):
+        """After migrating a v1 DB, insert_memo with priority should work."""
+        tmp = tempfile.mkdtemp()
+        self._create_v1_db(tmp)
+        db = ContextDB(tmp)
+        db.insert_memo(from_agent="agent-2", subject="New", content="Post-migration", priority="urgent")
+        rows = db.query("SELECT subject, priority FROM memos WHERE from_agent='agent-2'")
+        assert rows[0] == ("New", "urgent")
+        db.close()
+
+    def test_schema_version_tracked(self):
+        """Fresh DB should have a schema_version table with current version."""
+        tmp = tempfile.mkdtemp()
+        db = ContextDB(tmp)
+        rows = db.query("SELECT version FROM schema_version")
+        assert len(rows) == 1
+        assert rows[0][0] >= 2  # current version is at least 2
+        db.close()
+
+    def test_migration_is_idempotent(self):
+        """Opening the same DB twice should not fail or change data."""
+        tmp = tempfile.mkdtemp()
+        self._create_v1_db(tmp)
+        db1 = ContextDB(tmp)
+        db1.insert_memo(from_agent="test", subject="Idem", content="Check")
+        db1.close()
+        db2 = ContextDB(tmp)
+        rows = db2.query("SELECT COUNT(*) FROM memos")
+        assert rows[0][0] == 2  # original + new
+        db2.close()
+
+    def test_fresh_db_no_migration_needed(self):
+        """A fresh DB should start at current version without errors."""
+        tmp = tempfile.mkdtemp()
+        db = ContextDB(tmp)
+        version = db.query("SELECT version FROM schema_version")[0][0]
+        assert version >= 2
+        db.close()
+
+
 class TestConfig:
     def test_parse_simple_yaml(self):
         from lib.config import _parse_simple_yaml

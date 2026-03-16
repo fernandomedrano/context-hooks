@@ -112,6 +112,85 @@ class TestKnowledgeStore:
         assert rows[0][1] == "decision"
 
 
+class TestMemoSendCLI:
+    """Tests for parse_memo_send_args and --project support."""
+
+    def setup_method(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db = ContextDB(self.tmp)
+
+    def teardown_method(self):
+        self.db.close()
+
+    def test_flag_syntax(self):
+        """--from, --subject, --content flags should parse correctly."""
+        from lib.knowledge import parse_memo_send_args
+        parsed = parse_memo_send_args(['--from', 'agent-1', '--subject', 'Hello', '--content', 'Body text'])
+        assert parsed['from_agent'] == 'agent-1'
+        assert parsed['subject'] == 'Hello'
+        assert parsed['content'] == 'Body text'
+
+    def test_flag_syntax_with_to(self):
+        """--to flag should set the recipient."""
+        from lib.knowledge import parse_memo_send_args
+        parsed = parse_memo_send_args(['--from', 'a', '--subject', 's', '--content', 'c', '--to', 'agent-2'])
+        assert parsed['to_agent'] == 'agent-2'
+
+    def test_flag_syntax_default_to_broadcast(self):
+        """Without --to, recipient should default to '*'."""
+        from lib.knowledge import parse_memo_send_args
+        parsed = parse_memo_send_args(['--from', 'a', '--subject', 's', '--content', 'c'])
+        assert parsed['to_agent'] == '*'
+
+    def test_flag_syntax_with_priority(self):
+        """--priority flag should be parsed."""
+        from lib.knowledge import parse_memo_send_args
+        parsed = parse_memo_send_args(['--from', 'a', '--subject', 's', '--content', 'c', '--priority', 'urgent'])
+        assert parsed['priority'] == 'urgent'
+
+    def test_positional_syntax_still_works(self):
+        """Old positional syntax (from subject content) should still parse."""
+        from lib.knowledge import parse_memo_send_args
+        parsed = parse_memo_send_args(['agent-1', 'Hello', 'Body text'])
+        assert parsed['from_agent'] == 'agent-1'
+        assert parsed['subject'] == 'Hello'
+        assert parsed['content'] == 'Body text'
+
+    def test_project_flag_parsed(self):
+        """--project should be available in parsed result."""
+        from lib.knowledge import parse_memo_send_args
+        parsed = parse_memo_send_args(['--from', 'a', '--subject', 's', '--content', 'c', '--project', '/tmp/other'])
+        assert parsed['project'] == '/tmp/other'
+
+    def test_project_flag_sends_to_other_db(self):
+        """--project should resolve via data_dir and send to that project's DB."""
+        from lib.knowledge import parse_memo_send_args, send_memo
+        from lib.db import data_dir as get_data_dir
+        other_project_root = tempfile.mkdtemp()  # simulates a git root
+        parsed = parse_memo_send_args(['--from', 'sender', '--subject', 'Cross-project',
+                                        '--content', 'Hello from afar', '--project', other_project_root])
+        assert parsed['project'] == other_project_root
+        # Simulate what main() does: resolve via data_dir, open DB, send
+        other_data = get_data_dir(other_project_root)
+        other_db = ContextDB(other_data)
+        send_memo(other_db, parsed['from_agent'], parsed['subject'], parsed['content'],
+                  to_agent=parsed['to_agent'])
+        other_memos = list_memos(other_db)
+        assert len(other_memos) == 1
+        assert other_memos[0]['subject'] == 'Cross-project'
+        # Local DB should be empty
+        local_memos = list_memos(self.db)
+        assert len(local_memos) == 0
+        other_db.close()
+
+    def test_missing_required_flags_errors(self):
+        """Missing --from or --subject should error."""
+        import pytest
+        from lib.knowledge import parse_memo_send_args
+        with pytest.raises(SystemExit):
+            parse_memo_send_args(['--from', 'agent-1'])  # missing --subject and --content
+
+
 class TestMemos:
     def setup_method(self):
         self.tmp = tempfile.mkdtemp()

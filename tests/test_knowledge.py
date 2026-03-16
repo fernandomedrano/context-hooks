@@ -97,6 +97,20 @@ class TestKnowledgeStore:
         old = self.db.query("SELECT status, superseded_by FROM knowledge WHERE id = ?", (old_id,))
         assert old[0][0] == "superseded"
 
+    def test_store_with_custom_maturity(self):
+        from lib.knowledge import store
+        store(self.db, "reference", "Low-confidence signal", "Might be a pattern", maturity="signal")
+        rows = self.db.query("SELECT title, maturity FROM knowledge WHERE title = 'Low-confidence signal'")
+        assert len(rows) == 1
+        assert rows[0][1] == "signal"
+
+    def test_store_default_maturity_is_decision(self):
+        from lib.knowledge import store
+        store(self.db, "reference", "High-confidence fact", "This is decided")
+        rows = self.db.query("SELECT title, maturity FROM knowledge WHERE title = 'High-confidence fact'")
+        assert len(rows) == 1
+        assert rows[0][1] == "decision"
+
 
 class TestMemos:
     def setup_method(self):

@@ -9,11 +9,11 @@ VALID_CATEGORIES = [
 ]
 
 
-def store(db, category, title, content, reasoning=None, bug_refs=None, file_refs=None, tags=None):
-    """Store a new knowledge entry at maturity=decision."""
+def store(db, category, title, content, reasoning=None, bug_refs=None, file_refs=None, tags=None, maturity='decision'):
+    """Store a new knowledge entry. Maturity defaults to 'decision'."""
     db.insert_knowledge(
         category=category, title=title, content=content,
-        reasoning=reasoning, maturity='decision',
+        reasoning=reasoning, maturity=maturity,
         bug_refs=bug_refs, file_refs=file_refs, tags=tags
     )
 

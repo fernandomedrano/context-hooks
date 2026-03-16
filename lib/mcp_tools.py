@@ -458,3 +458,42 @@ def register_all_tools(server, ctx, compat=None):
                 name=alias, description=description,
                 input_schema=schema, handler=handler,
             )
+
+
+# ── CLI entry point ──────────────────────────────────────────────────────────
+
+def main():
+    """Start the MCP server. Called by: bin/context-hooks mcp [flags]"""
+    import argparse
+    from lib.db import data_dir, resolve_git_root
+    from lib.config import load_config
+    from lib.mcp import MCPServer
+
+    parser = argparse.ArgumentParser(description="context-hooks MCP server")
+    parser.add_argument("--compat", choices=["agent-bridge"], default=None,
+                        help="Register compatibility aliases")
+    parser.add_argument("--project", default=None,
+                        help="Project directory (default: resolve from cwd)")
+    args = parser.parse_args()
+
+    if args.project:
+        git_root = args.project
+    else:
+        git_root = resolve_git_root(os.getcwd())
+
+    project_dir = data_dir(git_root)
+    config = load_config(project_dir)
+
+    ctx = {
+        "project_dir": project_dir,
+        "git_root": git_root,
+        "config": config,
+    }
+
+    server = MCPServer("context-hooks", "0.2.0")
+    register_all_tools(server, ctx, compat=args.compat)
+    server.run()
+
+
+if __name__ == "__main__":
+    main()

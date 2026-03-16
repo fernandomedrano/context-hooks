@@ -25,6 +25,9 @@ def build_handlers(ctx):
     """Build all tool handlers closed over the shared context. Returns dict of name -> handler."""
     handlers = {}
 
+    from lib.export import resolve_export_dir
+    export_dir = resolve_export_dir(ctx.get('git_root', ''), ctx.get('project_dir', ''))
+
     # ── Knowledge tools ──────────────────────────────────────────────────
 
     def context_store_knowledge(args):
@@ -37,6 +40,7 @@ def build_handlers(ctx):
                 file_refs=args.get("file_refs"),
                 tags=args.get("tags"),
                 maturity=args.get("maturity", "decision"),
+                export_dir=export_dir,
             )
             return f"Stored: {args['title']}"
         finally:
@@ -87,7 +91,7 @@ def build_handlers(ctx):
     def context_promote_knowledge(args):
         db = _open_cluster_db(ctx)
         try:
-            knowledge.promote(db, args["id"])
+            knowledge.promote(db, args["id"], export_dir=export_dir)
             return f"Promoted entry {args['id']}"
         finally:
             db.close()
@@ -95,7 +99,7 @@ def build_handlers(ctx):
     def context_archive_knowledge(args):
         db = _open_cluster_db(ctx)
         try:
-            knowledge.archive(db, args["id"])
+            knowledge.archive(db, args["id"], export_dir=export_dir)
             return f"Archived entry {args['id']}"
         finally:
             db.close()
@@ -103,7 +107,7 @@ def build_handlers(ctx):
     def context_restore_knowledge(args):
         db = _open_cluster_db(ctx)
         try:
-            knowledge.restore(db, args["id"])
+            knowledge.restore(db, args["id"], export_dir=export_dir)
             return f"Restored entry {args['id']}"
         finally:
             db.close()
@@ -113,7 +117,12 @@ def build_handlers(ctx):
         try:
             knowledge.supersede(
                 db, args["old_id"], args["category"], args["title"],
-                args["content"], args.get("reasoning")
+                args["content"], args.get("reasoning"),
+                new_bug_refs=args.get("bug_refs"),
+                new_file_refs=args.get("file_refs"),
+                new_commit_refs=args.get("commit_refs"),
+                new_tags=args.get("tags"),
+                export_dir=export_dir,
             )
             return f"Superseded entry {args['old_id']} with '{args['title']}'"
         finally:
@@ -416,7 +425,7 @@ TOOL_SCHEMAS = [
     ("context_restore_knowledge", None, "Restore an archived or dismissed entry to active",
      {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}),
     ("context_supersede_knowledge", None, "Replace a knowledge entry with a new one, preserving lineage",
-     {"type": "object", "properties": {"old_id": {"type": "integer"}, "category": {"type": "string", "enum": ["architectural-decision", "coding-convention", "failure-class", "reference", "rejected-approach"]}, "title": {"type": "string"}, "content": {"type": "string"}, "reasoning": {"type": "string"}}, "required": ["old_id", "category", "title", "content"]}),
+     {"type": "object", "properties": {"old_id": {"type": "integer"}, "category": {"type": "string", "enum": ["architectural-decision", "coding-convention", "failure-class", "reference", "rejected-approach"]}, "title": {"type": "string"}, "content": {"type": "string"}, "reasoning": {"type": "string"}, "bug_refs": {"type": "string"}, "file_refs": {"type": "string"}, "commit_refs": {"type": "string"}, "tags": {"type": "string"}}, "required": ["old_id", "category", "title", "content"]}),
     # Memo tools
     ("context_send_memo", "send_memo", "Send a memo to a specific agent",
      {"type": "object", "properties": {"from_agent": {"type": "string"}, "to_agent": {"type": "string"}, "subject": {"type": "string"}, "content": {"type": "string"}, "expires_at": {"type": "string"}}, "required": ["from_agent", "to_agent", "subject", "content"]}),

@@ -9,13 +9,19 @@ VALID_CATEGORIES = [
 ]
 
 
-def store(db, category, title, content, reasoning=None, bug_refs=None, file_refs=None, tags=None, maturity='decision'):
+def store(db, category, title, content, reasoning=None, bug_refs=None, file_refs=None, tags=None, maturity='decision', export_dir=None):
     """Store a new knowledge entry. Maturity defaults to 'decision'."""
     db.insert_knowledge(
         category=category, title=title, content=content,
         reasoning=reasoning, maturity=maturity,
         bug_refs=bug_refs, file_refs=file_refs, tags=tags
     )
+    if export_dir:
+        from lib.export import write_entry, write_index, _safe_export
+        row = db.query("SELECT id FROM knowledge WHERE title = ? AND status = 'active' ORDER BY id DESC LIMIT 1", (title,))
+        if row:
+            _safe_export(write_entry, db, row[0][0], export_dir)
+            _safe_export(write_index, db, export_dir)
 
 
 def search(db, query_text, limit=10):
@@ -52,7 +58,7 @@ def list_entries(db, category=None, status='active'):
     return [_row_to_dict(r) for r in rows]
 
 
-def promote(db, entry_id):
+def promote(db, entry_id, export_dir=None):
     """Advance maturity by one stage. Returns error if already at convention."""
     rows = db.query("SELECT maturity FROM knowledge WHERE id = ?", (entry_id,))
     if not rows:
@@ -67,39 +73,63 @@ def promote(db, entry_id):
         "UPDATE knowledge SET maturity = ?, updated_at = ? WHERE id = ?",
         (new_maturity, datetime.now().isoformat(), entry_id)
     )
+    if export_dir:
+        from lib.export import write_entry, write_index, _safe_export
+        _safe_export(write_entry, db, entry_id, export_dir)
+        _safe_export(write_index, db, export_dir)
 
 
-def archive(db, entry_id):
+def archive(db, entry_id, export_dir=None):
     """Set status to archived."""
     from datetime import datetime
     db.execute(
         "UPDATE knowledge SET status = 'archived', updated_at = ? WHERE id = ?",
         (datetime.now().isoformat(), entry_id)
     )
+    if export_dir:
+        from lib.export import write_entry, write_index, _safe_export
+        _safe_export(write_entry, db, entry_id, export_dir)
+        _safe_export(write_index, db, export_dir)
 
 
-def restore(db, entry_id):
+def restore(db, entry_id, export_dir=None):
     """Restore from archived or superseded back to active."""
     from datetime import datetime
     db.execute(
         "UPDATE knowledge SET status = 'active', updated_at = ? WHERE id = ?",
         (datetime.now().isoformat(), entry_id)
     )
+    if export_dir:
+        from lib.export import write_entry, write_index, _safe_export
+        _safe_export(write_entry, db, entry_id, export_dir)
+        _safe_export(write_index, db, export_dir)
 
 
-def dismiss(db, entry_id):
+def dismiss(db, entry_id, export_dir=None):
     """Set status to dismissed. Won't resurface in health suggestions."""
     from datetime import datetime
+    rows = db.query("SELECT category, title FROM knowledge WHERE id = ?", (entry_id,))
     db.execute(
         "UPDATE knowledge SET status = 'dismissed', updated_at = ? WHERE id = ?",
         (datetime.now().isoformat(), entry_id)
     )
+    if export_dir and rows:
+        from lib.export import remove_entry, write_index, _safe_export, _slugify
+        category, title = rows[0]
+        _safe_export(remove_entry, category, _slugify(title, entry_id=entry_id), export_dir)
+        _safe_export(write_index, db, export_dir)
 
 
-def supersede(db, old_id, new_category, new_title, new_content, new_reasoning=None):
+def supersede(db, old_id, new_category, new_title, new_content, new_reasoning=None,
+              new_bug_refs=None, new_file_refs=None, new_commit_refs=None, new_tags=None,
+              export_dir=None):
     """Replace old entry with new one. Links via superseded_by."""
     from datetime import datetime
     now = datetime.now().isoformat()
+    # Fetch old entry info before update (for export rename logic)
+    old_rows = db.query("SELECT category, title FROM knowledge WHERE id = ?", (old_id,))
+    old_category = old_rows[0][0] if old_rows else None
+    old_title = old_rows[0][1] if old_rows else None
     # Mark old entry as superseded first (avoids UNIQUE constraint on title+status)
     db.execute(
         "UPDATE knowledge SET status = 'superseded', updated_at = ? WHERE id = ?",
@@ -108,7 +138,9 @@ def supersede(db, old_id, new_category, new_title, new_content, new_reasoning=No
     # Insert the new entry
     db.insert_knowledge(
         category=new_category, title=new_title, content=new_content,
-        reasoning=new_reasoning, maturity='decision'
+        reasoning=new_reasoning, maturity='decision',
+        bug_refs=new_bug_refs, file_refs=new_file_refs,
+        commit_refs=new_commit_refs, tags=new_tags
     )
     # Get the new entry's id and link it
     new_row = db.query(
@@ -120,6 +152,20 @@ def supersede(db, old_id, new_category, new_title, new_content, new_reasoning=No
         "UPDATE knowledge SET superseded_by = ? WHERE id = ?",
         (new_id, old_id)
     )
+    if export_dir and old_title:
+        from lib.export import write_entry, write_index, _safe_export, _slugify
+        old_slug = _slugify(old_title, entry_id=old_id)
+        new_slug = _slugify(new_title, entry_id=new_id)
+        old_filename = None
+        if old_slug == new_slug:
+            old_path = os.path.join(export_dir, old_category, f'{old_slug}.md')
+            old_filename = f'{old_slug}-superseded-{old_id}'
+            renamed = os.path.join(export_dir, old_category, f'{old_filename}.md')
+            if os.path.exists(old_path):
+                os.rename(old_path, renamed)
+        _safe_export(write_entry, db, old_id, export_dir, filename=old_filename)
+        _safe_export(write_entry, db, new_id, export_dir)
+        _safe_export(write_index, db, export_dir)
 
 
 # --- Memo functions ---
@@ -242,9 +288,12 @@ def main(args):
     cluster_dir = resolve_cluster_db(project_dir)
     db = ContextDB(cluster_dir)
 
+    from lib.export import resolve_export_dir
+    export_dir = resolve_export_dir(git_root, project_dir)
+
     try:
         if len(args) < 1:
-            print("Usage: knowledge <store|search|list|promote|archive|restore|dismiss|supersede|memo> [args]")
+            print("Usage: knowledge <store|search|list|promote|archive|restore|dismiss|supersede|export|memo> [args]")
             sys.exit(1)
 
         cmd = args[0]
@@ -266,7 +315,7 @@ def main(args):
                     kwargs['tags'] = args[i + 1]; i += 2
                 else:
                     i += 1
-            store(db, args[1], args[2], args[3], **kwargs)
+            store(db, args[1], args[2], args[3], export_dir=export_dir, **kwargs)
             print(f"Stored: {args[2]}")
 
         elif cmd == 'search':
@@ -286,25 +335,25 @@ def main(args):
         elif cmd == 'promote':
             if len(args) < 2:
                 print("Usage: knowledge promote <id>"); sys.exit(1)
-            promote(db, int(args[1]))
+            promote(db, int(args[1]), export_dir=export_dir)
             print(f"Promoted entry {args[1]}")
 
         elif cmd == 'archive':
             if len(args) < 2:
                 print("Usage: knowledge archive <id>"); sys.exit(1)
-            archive(db, int(args[1]))
+            archive(db, int(args[1]), export_dir=export_dir)
             print(f"Archived entry {args[1]}")
 
         elif cmd == 'restore':
             if len(args) < 2:
                 print("Usage: knowledge restore <id>"); sys.exit(1)
-            restore(db, int(args[1]))
+            restore(db, int(args[1]), export_dir=export_dir)
             print(f"Restored entry {args[1]}")
 
         elif cmd == 'dismiss':
             if len(args) < 2:
                 print("Usage: knowledge dismiss <id>"); sys.exit(1)
-            dismiss(db, int(args[1]))
+            dismiss(db, int(args[1]), export_dir=export_dir)
             print(f"Dismissed entry {args[1]}")
 
         elif cmd == 'supersede':
@@ -315,8 +364,26 @@ def main(args):
             if '--reasoning' in args:
                 idx = args.index('--reasoning')
                 reasoning = args[idx + 1] if idx + 1 < len(args) else None
-            supersede(db, int(args[1]), args[2], args[3], args[4], reasoning)
+            supersede(db, int(args[1]), args[2], args[3], args[4], reasoning, export_dir=export_dir)
             print(f"Superseded entry {args[1]}")
+
+        elif cmd == 'export':
+            from lib.export import export_all as _export_all, _slugify
+            dry_run = '--dry-run' in args
+            _export_dir = export_dir or os.path.join(git_root, 'data', 'knowledge')
+            if dry_run:
+                rows = db.query(
+                    "SELECT id, category, title, status FROM knowledge "
+                    "WHERE status IN ('active', 'archived') ORDER BY id"
+                )
+                print(f"Would export {len(rows)} entries to {_export_dir}/")
+                for r in rows:
+                    slug = _slugify(r[2], entry_id=r[0])
+                    print(f"  {r[1]}/{slug}.md ({r[3]})")
+            else:
+                _export_all(db, _export_dir)
+                rows = db.query("SELECT COUNT(*) FROM knowledge WHERE status IN ('active', 'archived')")
+                print(f"Exported {rows[0][0]} entries to {_export_dir}/")
 
         elif cmd == 'memo':
             if len(args) < 2:

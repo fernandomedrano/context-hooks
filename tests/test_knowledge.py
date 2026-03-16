@@ -228,6 +228,138 @@ class TestMemoSendCLI:
         assert parsed['content'] == '-'
 
 
+class TestKnowledgeExport:
+    """Integration tests: knowledge mutations trigger markdown export."""
+
+    def setup_method(self):
+        self.tmp = tempfile.mkdtemp()
+        self.export_dir = os.path.join(self.tmp, 'knowledge')
+        from lib.db import ContextDB
+        self.db_dir = tempfile.mkdtemp()
+        self.db = ContextDB(self.db_dir)
+
+    def teardown_method(self):
+        self.db.close()
+
+    def test_store_writes_file(self):
+        from lib.knowledge import store
+        store(self.db, 'failure-class', 'Export test', 'Content here.',
+              export_dir=self.export_dir)
+        path = os.path.join(self.export_dir, 'failure-class', 'export-test.md')
+        assert os.path.exists(path)
+        with open(path) as f:
+            text = f.read()
+        assert 'title: Export test' in text
+
+    def test_store_writes_index(self):
+        from lib.knowledge import store
+        store(self.db, 'reference', 'Index test', 'Body.',
+              export_dir=self.export_dir)
+        index = os.path.join(self.export_dir, 'index.md')
+        assert os.path.exists(index)
+        with open(index) as f:
+            text = f.read()
+        assert 'Index test' in text
+
+    def test_promote_updates_file(self):
+        from lib.knowledge import store, promote
+        store(self.db, 'failure-class', 'Promote test', 'Content.',
+              maturity='signal', export_dir=self.export_dir)
+        row = self.db.query("SELECT id FROM knowledge WHERE title = 'Promote test'")
+        promote(self.db, row[0][0], export_dir=self.export_dir)
+        path = os.path.join(self.export_dir, 'failure-class', 'promote-test.md')
+        with open(path) as f:
+            text = f.read()
+        assert 'maturity: pattern' in text
+
+    def test_store_no_export_when_dir_none(self):
+        from lib.knowledge import store
+        store(self.db, 'reference', 'No export', 'Body.', export_dir=None)
+
+    def test_archive_keeps_file_updates_frontmatter(self):
+        from lib.knowledge import store, archive
+        store(self.db, 'reference', 'Archive test', 'Content.',
+              export_dir=self.export_dir)
+        row = self.db.query("SELECT id FROM knowledge WHERE title = 'Archive test'")
+        archive(self.db, row[0][0], export_dir=self.export_dir)
+        path = os.path.join(self.export_dir, 'reference', 'archive-test.md')
+        assert os.path.exists(path)
+        with open(path) as f:
+            text = f.read()
+        assert 'status: archived' in text
+
+    def test_archive_removes_from_index(self):
+        from lib.knowledge import store, archive
+        store(self.db, 'reference', 'Index gone', 'Body.',
+              export_dir=self.export_dir)
+        row = self.db.query("SELECT id FROM knowledge WHERE title = 'Index gone'")
+        archive(self.db, row[0][0], export_dir=self.export_dir)
+        with open(os.path.join(self.export_dir, 'index.md')) as f:
+            text = f.read()
+        assert 'Index gone' not in text
+
+    def test_restore_updates_file_and_index(self):
+        from lib.knowledge import store, archive, restore
+        store(self.db, 'reference', 'Restore test', 'Body.',
+              export_dir=self.export_dir)
+        row = self.db.query("SELECT id FROM knowledge WHERE title = 'Restore test'")
+        eid = row[0][0]
+        archive(self.db, eid, export_dir=self.export_dir)
+        restore(self.db, eid, export_dir=self.export_dir)
+        path = os.path.join(self.export_dir, 'reference', 'restore-test.md')
+        with open(path) as f:
+            text = f.read()
+        assert 'status: active' in text
+        with open(os.path.join(self.export_dir, 'index.md')) as f:
+            assert 'Restore test' in f.read()
+
+    def test_dismiss_deletes_file(self):
+        from lib.knowledge import store, dismiss
+        store(self.db, 'reference', 'Dismiss test', 'Body.',
+              export_dir=self.export_dir)
+        row = self.db.query("SELECT id FROM knowledge WHERE title = 'Dismiss test'")
+        dismiss(self.db, row[0][0], export_dir=self.export_dir)
+        path = os.path.join(self.export_dir, 'reference', 'dismiss-test.md')
+        assert not os.path.exists(path)
+
+    def test_supersede_writes_both_files(self):
+        from lib.knowledge import store, supersede
+        store(self.db, 'failure-class', 'Old entry', 'Old content.',
+              export_dir=self.export_dir)
+        row = self.db.query("SELECT id FROM knowledge WHERE title = 'Old entry'")
+        supersede(self.db, row[0][0], 'failure-class', 'New entry', 'New content.',
+                  export_dir=self.export_dir)
+        old_path = os.path.join(self.export_dir, 'failure-class', 'old-entry.md')
+        new_path = os.path.join(self.export_dir, 'failure-class', 'new-entry.md')
+        assert os.path.exists(old_path)
+        assert os.path.exists(new_path)
+        with open(old_path) as f:
+            assert 'status: superseded' in f.read()
+        with open(new_path) as f:
+            assert 'status: active' in f.read()
+
+    def test_supersede_same_title_renames_old(self):
+        from lib.knowledge import store, supersede
+        store(self.db, 'failure-class', 'Same title', 'Version 1.',
+              export_dir=self.export_dir)
+        row = self.db.query("SELECT id FROM knowledge WHERE title = 'Same title'")
+        old_id = row[0][0]
+        supersede(self.db, old_id, 'failure-class', 'Same title', 'Version 2.',
+                  export_dir=self.export_dir)
+        renamed = os.path.join(self.export_dir, 'failure-class', f'same-title-superseded-{old_id}.md')
+        new_path = os.path.join(self.export_dir, 'failure-class', 'same-title.md')
+        assert os.path.exists(renamed)
+        assert os.path.exists(new_path)
+        with open(renamed) as f:
+            renamed_text = f.read()
+            assert 'status: superseded' in renamed_text
+            assert 'Version 1.' in renamed_text
+        with open(new_path) as f:
+            new_text = f.read()
+            assert 'status: active' in new_text
+            assert 'Version 2.' in new_text
+
+
 class TestClusterRouting:
     """Tests that knowledge/memo operations route to master DB when clustered."""
 

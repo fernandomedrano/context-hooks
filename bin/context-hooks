@@ -41,7 +41,7 @@ Queries:   query parity|search|tag|file|bugs|related|recent|stats
 
 Analysis:  xref | health | profile [--days=30]
 
-Knowledge: knowledge store|search|list|promote|archive|restore|dismiss
+Knowledge: knowledge store|search|list|promote|archive|restore|dismiss|export
 Memos:     memo send|list|read
 
 Maintain:  status | prune [--dry-run] | nudge enable|disable|list

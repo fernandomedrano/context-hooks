@@ -7,18 +7,18 @@ Agent handoff document. Any agent on any tool can pick up from here.
 
 **As of:** 2026-03-15
 
-**Where we are:** v0.2 MCP server + dogfooding fixes complete (215 tests). Schema auto-migration and CLI flag syntax for cross-project memo send shipped. Cross-agent memo exchange proven between KADE2 and context-hooks.
+**Where we are:** v0.2 complete — MCP server + cross-project cluster routing (239 tests). Cluster model E2E verified: `cluster join` routes memos/knowledge to master DB, local data stays per-project. Schema auto-migration handles cross-project DB version drift.
 
-**Immediate next task:** Design cross-project memo routing layer — formalize address discovery, replace manual path resolution.
+**Immediate next task:** Knowledge durability — dual-write (SQLite for querying + markdown export in master repo for git-tracking). KADE2 design constraint: knowledge must survive catastrophic data loss.
 
 **Blocked / waiting:**
 - Nothing currently blocked
 
 **Priority queue:**
-1. Cross-project memo routing design
-2. Knowledge durability: dual-write (SQLite + git-tracked markdown)
-3. End-to-end MCP server test with Claude Code
-4. Task 13: Migration from v1
+1. Knowledge durability: dual-write (SQLite + git-tracked markdown)
+2. End-to-end MCP server test with Claude Code
+3. Task 13: Migration from v1 (import from old DB format + agent-bridge data)
+4. Gemini/Cursor/VS Code adapters
 
 ---
 

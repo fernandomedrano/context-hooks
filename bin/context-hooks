@@ -26,6 +26,7 @@ case "$CMD" in
   install)    bash "$SCRIPT_DIR/install.sh" "$@" ;;
   uninstall)  bash "$SCRIPT_DIR/uninstall.sh" "$@" ;;
   mcp)        python3 "$SCRIPT_DIR/lib/mcp_tools.py" "$@" ;;
+  cluster)    python3 "$SCRIPT_DIR/lib/cluster.py" "$@" ;;
   version)    echo "context-hooks v0.1.0" ;;
   help|--help|-h)
     cat <<'HELP'
@@ -46,6 +47,9 @@ Memos:     memo send|list|read
 Maintain:  status | prune [--dry-run] | nudge enable|disable|list
 
 MCP:       mcp [--compat=agent-bridge] [--project=/path]
+
+Cluster:   cluster join --master /path --name <name>
+           cluster show | leave
 HELP
     ;;
   *)

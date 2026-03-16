@@ -132,10 +132,11 @@ def send_memo(db, from_agent, subject, content, to_agent='*', expires_at=None, p
     )
 
 
-def parse_memo_send_args(args):
+def parse_memo_send_args(args, stdin=None):
     """Parse memo send arguments — supports both flag and positional syntax.
 
     Flag syntax:  --from X --subject Y --content Z [--to T] [--priority P] [--project PATH]
+                  --content -   reads content from stdin
     Positional:   <from> <subject> <content>
 
     Returns dict with keys: from_agent, subject, content, to_agent, priority, project
@@ -151,10 +152,17 @@ def parse_memo_send_args(args):
         parser.add_argument('--priority', default='normal')
         parser.add_argument('--project', default=None)
         parsed = parser.parse_args(args)
+        content = parsed.content
+        # --content - means read from stdin
+        if content == '-':
+            source = stdin if stdin is not None else sys.stdin
+            data = source.read().strip()
+            if data:
+                content = data
         return {
             'from_agent': parsed.from_agent,
             'subject': parsed.subject,
-            'content': parsed.content,
+            'content': content,
             'to_agent': parsed.to_agent,
             'priority': parsed.priority,
             'project': parsed.project,

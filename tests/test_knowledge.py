@@ -190,6 +190,43 @@ class TestMemoSendCLI:
         with pytest.raises(SystemExit):
             parse_memo_send_args(['--from', 'agent-1'])  # missing --subject and --content
 
+    def test_content_with_newlines(self):
+        """Multi-line content passed as a single --content arg should be preserved."""
+        from lib.knowledge import parse_memo_send_args
+        content = "Line one\nLine two\nLine three"
+        parsed = parse_memo_send_args(['--from', 'a', '--subject', 's', '--content', content])
+        assert parsed['content'] == content
+        assert '\n' in parsed['content']
+
+    def test_content_from_stdin(self):
+        """--content - should read content from stdin."""
+        import io
+        from lib.knowledge import parse_memo_send_args
+        stdin_data = "Multi-line\ncontent from\nstdin"
+        parsed = parse_memo_send_args(
+            ['--from', 'a', '--subject', 's', '--content', '-'],
+            stdin=io.StringIO(stdin_data)
+        )
+        assert parsed['content'] == stdin_data
+
+    def test_positional_multiline_content(self):
+        """Positional syntax with multi-line content should preserve newlines."""
+        from lib.knowledge import parse_memo_send_args
+        content = "Line one\nLine two"
+        parsed = parse_memo_send_args(['agent-1', 'Hello', content])
+        assert parsed['content'] == content
+
+    def test_content_stdin_dash_literal(self):
+        """--content - with no stdin should use '-' as literal content."""
+        import io
+        from lib.knowledge import parse_memo_send_args
+        parsed = parse_memo_send_args(
+            ['--from', 'a', '--subject', 's', '--content', '-'],
+            stdin=io.StringIO('')
+        )
+        # Empty stdin means - was literal
+        assert parsed['content'] == '-'
+
 
 class TestClusterRouting:
     """Tests that knowledge/memo operations route to master DB when clustered."""

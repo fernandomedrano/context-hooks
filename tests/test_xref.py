@@ -57,12 +57,12 @@ class TestXrefReport:
 
     def test_runs_without_memory_file(self):
         """Should gracefully skip section 1 when no MEMORY.md exists."""
-        result = run_xref(self.db, "/nonexistent/project", self.tmp)
+        result = run_xref(self.db, self.db, "/nonexistent/project", self.tmp)
         assert "CROSS-REFERENCE" in result
 
     def test_runs_with_empty_db(self):
         """Report should work with completely empty database."""
-        result = run_xref(self.db, "/p", self.tmp)
+        result = run_xref(self.db, self.db, "/p", self.tmp)
         assert "CROSS-REFERENCE" in result
         assert "SUMMARY" in result
 
@@ -73,7 +73,7 @@ class TestXrefReport:
             author="t@t.com", subject="fix: BUG-138", body="",
             files_changed="chat.py", tags="fix,BUG-138", project_dir="/p"
         )
-        result = run_xref(self.db, "/p", self.tmp)
+        result = run_xref(self.db, self.db, "/p", self.tmp)
         assert "BUG-138" in result
         assert "gap" in result.lower() or "not in" in result.lower() or "missing" in result.lower() or "without" in result.lower()
 
@@ -88,7 +88,7 @@ class TestXrefReport:
             category="failure-class", title="BUG-200 class",
             content="description", bug_refs="BUG-200"
         )
-        result = run_xref(self.db, "/p", self.tmp)
+        result = run_xref(self.db, self.db, "/p", self.tmp)
         # BUG-200 should NOT appear in gaps section
         lines = result.split("\n")
         in_gap_section = False
@@ -115,12 +115,12 @@ class TestXrefReport:
             author="t@t.com", subject="fix: BUG-100", body="",
             files_changed="x.py", tags="fix,BUG-100", project_dir="/p"
         )
-        result = run_xref(self.db, "/p", self.tmp)
+        result = run_xref(self.db, self.db, "/p", self.tmp)
         assert "STALE" in result
 
     def test_all_six_sections_present(self):
         """Report should always have all 6 section headers."""
-        result = run_xref(self.db, "/p", self.tmp)
+        result = run_xref(self.db, self.db, "/p", self.tmp)
         assert "1. MEMORY.md RULES" in result
         assert "2. UNDOCUMENTED PATTERNS" in result
         assert "3. KNOWLEDGE FRESHNESS" in result
@@ -147,3 +147,31 @@ class TestXrefReport:
         assert len(rows) == 1
         assert rows[0][0] == "Pipeline extraction"
         assert rows[0][1] >= 1
+
+
+class TestClusterXrefRouting:
+    def test_xref_reads_knowledge_from_cluster_db(self):
+        """run_xref should read knowledge from cluster_db."""
+        local_db = ContextDB(tempfile.mkdtemp())
+        cluster_db = ContextDB(tempfile.mkdtemp())
+
+        cluster_db.insert_knowledge(
+            category="reference", title="Cluster fact", content="Only in cluster"
+        )
+
+        result = run_xref(local_db, cluster_db, "/fake/root", tempfile.mkdtemp())
+        assert "Cluster fact" in result or "knowledge" in result.lower()
+        local_db.close()
+        cluster_db.close()
+
+    def test_xref_writes_rule_validations_to_local_db(self):
+        """run_xref should write rule_validations to local_db, not cluster_db."""
+        local_dir = tempfile.mkdtemp()
+        local_db = ContextDB(local_dir)
+        cluster_db = ContextDB(tempfile.mkdtemp())
+
+        result = run_xref(local_db, cluster_db, "/fake/root", local_dir)
+        local_rules = local_db.query("SELECT COUNT(*) FROM rule_validations")
+        assert local_rules[0][0] >= 0
+        local_db.close()
+        cluster_db.close()

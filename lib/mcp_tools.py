@@ -340,12 +340,14 @@ def build_handlers(ctx):
             db.close()
 
     def context_run_xref(args):
-        db = _open_cluster_db(ctx)
+        local_db = _open_local_db(ctx)
+        cluster_db = _open_cluster_db(ctx)
         try:
             from lib.xref import run_xref
-            return run_xref(db, ctx["git_root"], ctx["project_dir"])
+            return run_xref(local_db, cluster_db, ctx["git_root"], ctx["project_dir"])
         finally:
-            db.close()
+            local_db.close()
+            cluster_db.close()
 
     def context_get_health(args):
         local_db = _open_local_db(ctx)

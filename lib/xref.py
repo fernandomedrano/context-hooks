@@ -492,13 +492,13 @@ def _section_6(rules: list[dict], knowledge: list[dict]) -> str:
 
 # ── Main entry point ─────────────────────────────────────────────────────────
 
-def run_xref(db, git_root: str, project_data_dir: str) -> str:
+def run_xref(local_db, cluster_db, git_root: str, project_data_dir: str) -> str:
     """Run the full 6-section cross-reference report. Returns formatted text."""
     from lib.tags import load_profile
 
     # Load data
-    commits = _load_commits(db)
-    knowledge = _load_knowledge(db)
+    commits = _load_commits(local_db)
+    knowledge = _load_knowledge(cluster_db)
     tag_counts = _compute_tag_counts(commits)
 
     # Load MEMORY.md
@@ -513,7 +513,7 @@ def run_xref(db, git_root: str, project_data_dir: str) -> str:
 
     # Update rule validations
     if rules and commits:
-        _update_rule_validations(db, rules, commits)
+        _update_rule_validations(local_db, rules, commits)
 
     # Header
     now = datetime.now().strftime('%Y-%m-%d')
@@ -575,16 +575,20 @@ def main():
     """CLI entry point: context-hooks xref"""
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from lib.db import ContextDB, data_dir, resolve_git_root
+    from lib.db import ContextDB, data_dir, resolve_git_root, resolve_cluster_db
 
     git_root = resolve_git_root(os.getcwd())
     project_dir = data_dir(git_root)
-    db = ContextDB(project_dir)
+    cluster_dir = resolve_cluster_db(project_dir)
+    local_db = ContextDB(project_dir)
+    cluster_db = ContextDB(cluster_dir) if cluster_dir != project_dir else local_db
 
     try:
-        print(run_xref(db, git_root, project_dir))
+        print(run_xref(local_db, cluster_db, git_root, project_dir))
     finally:
-        db.close()
+        local_db.close()
+        if cluster_db is not local_db:
+            cluster_db.close()
 
 
 if __name__ == "__main__":

@@ -151,6 +151,46 @@ class TestContextDB:
         rows = self.db.query("SELECT status FROM knowledge WHERE title = 'Use React' ORDER BY id")
         assert [r[0] for r in rows] == ["archived", "active"]
 
+    def test_upsert_shared_state(self):
+        self.db.upsert_shared_state(key="current_task", value="implement MCP", updated_by="agent-1")
+        rows = self.db.query("SELECT key, value, updated_by FROM shared_state")
+        assert len(rows) == 1
+        assert rows[0] == ("current_task", "implement MCP", "agent-1")
+
+    def test_upsert_shared_state_overwrite(self):
+        self.db.upsert_shared_state(key="status", value="draft", updated_by="agent-1")
+        self.db.upsert_shared_state(key="status", value="published", updated_by="agent-2")
+        rows = self.db.query("SELECT value, updated_by FROM shared_state WHERE key = 'status'")
+        assert len(rows) == 1
+        assert rows[0] == ("published", "agent-2")
+
+    def test_get_shared_state_single(self):
+        self.db.upsert_shared_state(key="mode", value="debug", updated_by="agent-1")
+        result = self.db.get_shared_state("mode")
+        assert result == [("mode", "debug", "agent-1", result[0][3])]  # updated_at is dynamic
+
+    def test_get_shared_state_all(self):
+        self.db.upsert_shared_state(key="a", value="1", updated_by="x")
+        self.db.upsert_shared_state(key="b", value="2", updated_by="y")
+        result = self.db.get_shared_state()
+        assert len(result) == 2
+
+    def test_get_shared_state_missing(self):
+        result = self.db.get_shared_state("nonexistent")
+        assert result == []
+
+    def test_delete_shared_state(self):
+        self.db.upsert_shared_state(key="temp", value="val", updated_by="x")
+        self.db.delete_shared_state("temp")
+        result = self.db.get_shared_state("temp")
+        assert result == []
+
+    def test_shared_state_table_exists(self):
+        tables = self.db.query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='shared_state'"
+        )
+        assert len(tables) == 1
+
 
 class TestConfig:
     def test_parse_simple_yaml(self):

@@ -72,6 +72,13 @@ CREATE TABLE IF NOT EXISTS rule_validations (
   status TEXT DEFAULT 'active'
 );
 
+CREATE TABLE IF NOT EXISTS shared_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_by TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
   title, content, reasoning,
   content=knowledge, content_rowid=id
@@ -202,6 +209,30 @@ class ContextDB:
             "(SELECT id FROM events WHERE session_id = ? ORDER BY id DESC LIMIT ?)",
             (session_id, session_id, max_events)
         )
+
+    def upsert_shared_state(self, *, key, value, updated_by):
+        """Set or update a shared state key."""
+        from datetime import datetime
+        now = datetime.now().isoformat()
+        self.execute(
+            "INSERT INTO shared_state (key, value, updated_by, updated_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=?, updated_by=?, updated_at=?",
+            (key, value, updated_by, now, value, updated_by, now)
+        )
+
+    def get_shared_state(self, key=None):
+        """Get one key or all shared state. Returns list of tuples."""
+        if key:
+            return self.query(
+                "SELECT key, value, updated_by, updated_at FROM shared_state WHERE key = ?",
+                (key,)
+            )
+        return self.query("SELECT key, value, updated_by, updated_at FROM shared_state ORDER BY key")
+
+    def delete_shared_state(self, key):
+        """Remove a shared state key."""
+        self.execute("DELETE FROM shared_state WHERE key = ?", (key,))
 
     def close(self):
         self.conn.close()

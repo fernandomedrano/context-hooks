@@ -191,6 +191,23 @@ class TestContextDB:
         )
         assert len(tables) == 1
 
+    def test_insert_memo_with_priority(self):
+        self.db.insert_memo(
+            from_agent="agent-1", subject="Urgent", content="Deploy now",
+            priority="urgent"
+        )
+        rows = self.db.query("SELECT subject, priority FROM memos")
+        assert len(rows) == 1
+        assert rows[0] == ("Urgent", "urgent")
+
+    def test_insert_memo_default_priority(self):
+        self.db.insert_memo(
+            from_agent="agent-1", subject="FYI", content="No rush"
+        )
+        rows = self.db.query("SELECT subject, priority FROM memos")
+        assert len(rows) == 1
+        assert rows[0] == ("FYI", "normal")
+
 
 class TestConfig:
     def test_parse_simple_yaml(self):

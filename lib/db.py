@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS memos (
   thread_id TEXT,
   created_at TEXT NOT NULL,
   read INTEGER DEFAULT 0,
-  expires_at TEXT
+  expires_at TEXT,
+  priority TEXT DEFAULT 'normal'
 );
 
 CREATE TABLE IF NOT EXISTS rule_validations (
@@ -194,12 +195,13 @@ class ContextDB:
                 (row[0][0], title, content, reasoning or '')
             )
 
-    def insert_memo(self, *, from_agent, subject, content, to_agent='*', thread_id=None, expires_at=None):
+    def insert_memo(self, *, from_agent, subject, content, to_agent='*',
+                    thread_id=None, expires_at=None, priority='normal'):
         from datetime import datetime
         self.execute(
-            "INSERT INTO memos (from_agent, to_agent, subject, content, thread_id, created_at, expires_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (from_agent, to_agent, subject, content, thread_id, datetime.now().isoformat(), expires_at)
+            "INSERT INTO memos (from_agent, to_agent, subject, content, thread_id, created_at, expires_at, priority) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (from_agent, to_agent, subject, content, thread_id, datetime.now().isoformat(), expires_at, priority)
         )
 
     def evict_events(self, session_id: str, max_events: int = 500):

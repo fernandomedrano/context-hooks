@@ -1065,7 +1065,11 @@ Add after the knowledge handlers section inside `build_handlers()`:
                     sql += " AND read = 0"
                 sql += " ORDER BY id ASC"
                 rows = db.query(sql, tuple(params))
-                result = [knowledge._memo_to_dict(r) for r in rows]
+                result = [
+                    {"id": r[0], "from_agent": r[1], "to_agent": r[2], "subject": r[3],
+                     "content": r[4], "created_at": r[5], "read": r[6], "expires_at": r[7]}
+                    for r in rows
+                ]
             else:
                 result = knowledge.list_memos(db, unread_only=unread_only)
             return json.dumps(result)
@@ -1281,6 +1285,25 @@ class TestQueryTools:
         result = h({})
         # May return "No issues" or actual health data
         assert isinstance(result, str)
+
+    def test_run_xref(self):
+        h = self._handler("context_run_xref")
+        result = h({})
+        # xref returns a report string even with empty DB
+        assert isinstance(result, str)
+
+    def test_get_profile(self):
+        # Create a minimal git repo so generate_profile doesn't fail
+        import subprocess
+        subprocess.run(["git", "init", self.tmp], capture_output=True)
+        subprocess.run(["git", "-C", self.tmp, "commit", "--allow-empty", "-m", "init"],
+                       capture_output=True, env={**os.environ, "GIT_AUTHOR_NAME": "t",
+                       "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                       "GIT_COMMITTER_EMAIL": "t@t"})
+        h = self._handler("context_get_profile")
+        result = json.loads(h({"days": 7}))
+        assert "version" in result
+        assert "parallel_paths" in result
 
     def test_get_project_context(self):
         self.db.insert_knowledge(category="reference", title="Test", content="c")

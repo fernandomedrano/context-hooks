@@ -191,6 +191,99 @@ class TestMemoSendCLI:
             parse_memo_send_args(['--from', 'agent-1'])  # missing --subject and --content
 
 
+class TestClusterRouting:
+    """Tests that knowledge/memo operations route to master DB when clustered."""
+
+    def test_send_memo_routes_to_master(self):
+        """Satellite send_memo should write to master DB, not local."""
+        master_root = tempfile.mkdtemp()
+        from lib.db import data_dir, resolve_cluster_db
+        master_dir = data_dir(master_root)
+        master_db = ContextDB(master_dir)
+
+        satellite_dir = tempfile.mkdtemp()
+        os.makedirs(satellite_dir, exist_ok=True)
+        satellite_db = ContextDB(satellite_dir)
+
+        with open(os.path.join(satellite_dir, "cluster.yaml"), "w") as f:
+            f.write(f"cluster: test\nmaster: {master_root}\n")
+
+        cluster_dir = resolve_cluster_db(satellite_dir)
+        cluster_db = ContextDB(cluster_dir)
+        send_memo(cluster_db, "satellite-agent", "Hello master", "Test content")
+
+        master_memos = list_memos(master_db)
+        assert len(master_memos) == 1
+        assert master_memos[0]["subject"] == "Hello master"
+
+        satellite_memos = list_memos(satellite_db)
+        assert len(satellite_memos) == 0
+
+        master_db.close()
+        satellite_db.close()
+        cluster_db.close()
+
+    def test_store_knowledge_routes_to_master(self):
+        """Satellite store should write to master DB."""
+        master_root = tempfile.mkdtemp()
+        from lib.db import data_dir, resolve_cluster_db
+        master_dir = data_dir(master_root)
+        master_db = ContextDB(master_dir)
+
+        satellite_dir = tempfile.mkdtemp()
+        os.makedirs(satellite_dir, exist_ok=True)
+        satellite_db = ContextDB(satellite_dir)
+
+        with open(os.path.join(satellite_dir, "cluster.yaml"), "w") as f:
+            f.write(f"cluster: test\nmaster: {master_root}\n")
+
+        cluster_dir = resolve_cluster_db(satellite_dir)
+        cluster_db = ContextDB(cluster_dir)
+        store(cluster_db, "architectural-decision", "Cluster routing", "We use hub-and-spoke")
+
+        master_entries = list_entries(master_db)
+        assert len(master_entries) == 1
+        satellite_entries = list_entries(satellite_db)
+        assert len(satellite_entries) == 0
+
+        master_db.close()
+        satellite_db.close()
+        cluster_db.close()
+
+    def test_standalone_unchanged(self):
+        """Without cluster.yaml, all operations use local DB."""
+        from lib.db import resolve_cluster_db
+        standalone_dir = tempfile.mkdtemp()
+        db = ContextDB(standalone_dir)
+
+        cluster_dir = resolve_cluster_db(standalone_dir)
+        assert cluster_dir == standalone_dir
+
+        send_memo(db, "agent", "Local memo", "Content")
+        assert len(list_memos(db)) == 1
+        db.close()
+
+    def test_project_flag_resolves_through_cluster(self):
+        """--project flag should resolve the target's cluster before sending."""
+        from lib.knowledge import parse_memo_send_args
+        from lib.db import data_dir, resolve_cluster_db
+
+        master_root = tempfile.mkdtemp()
+        master_dir = data_dir(master_root)
+        master_db = ContextDB(master_dir)
+
+        target_root = tempfile.mkdtemp()
+        target_dir = data_dir(target_root)
+        ContextDB(target_dir)
+        with open(os.path.join(target_dir, "cluster.yaml"), "w") as f:
+            f.write(f"cluster: test\nmaster: {master_root}\n")
+
+        target_cluster = resolve_cluster_db(target_dir)
+        assert target_cluster == master_dir
+
+        master_db.close()
+
+
 class TestMemos:
     def setup_method(self):
         self.tmp = tempfile.mkdtemp()

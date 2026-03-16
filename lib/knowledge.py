@@ -226,11 +226,13 @@ def _memo_to_dict(row):
 
 def main(args):
     """Handle CLI: knowledge store|search|list|promote|archive|restore|dismiss and memo send|list|read"""
-    from lib.db import ContextDB, resolve_git_root
+    from lib.db import ContextDB, resolve_git_root, resolve_cluster_db
+    from lib.db import data_dir as get_data_dir
 
     git_root = resolve_git_root(os.getcwd())
-    from lib.db import data_dir as get_data_dir
-    db = ContextDB(get_data_dir(git_root))
+    project_dir = get_data_dir(git_root)
+    cluster_dir = resolve_cluster_db(project_dir)
+    db = ContextDB(cluster_dir)
 
     try:
         if len(args) < 1:
@@ -315,7 +317,9 @@ def main(args):
             if subcmd == 'send':
                 parsed = parse_memo_send_args(args[2:])
                 if parsed['project']:
-                    target_db = ContextDB(get_data_dir(parsed['project']))
+                    target_project_dir = get_data_dir(parsed['project'])
+                    target_cluster_dir = resolve_cluster_db(target_project_dir)
+                    target_db = ContextDB(target_cluster_dir)
                 else:
                     target_db = db
                 send_memo(target_db, parsed['from_agent'], parsed['subject'],

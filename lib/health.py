@@ -261,3 +261,37 @@ def _get_tag_counts(db, git_root: str) -> dict[str, int]:
             if tag:
                 counts[tag] = counts.get(tag, 0) + 1
     return counts
+
+
+def main():
+    """CLI entry point: context-hooks health | context-hooks prune [--dry-run]"""
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lib.db import ContextDB, data_dir, resolve_git_root
+    from lib.config import load_config
+
+    git_root = resolve_git_root(os.getcwd())
+    project_dir = data_dir(git_root)
+    db = ContextDB(project_dir)
+    config = load_config(project_dir)
+
+    try:
+        # Check if called as "prune"
+        if len(sys.argv) > 1 and sys.argv[1] == "prune":
+            dry_run = "--dry-run" in sys.argv
+            print(prune(db, git_root, project_dir, dry_run=dry_run))
+        else:
+            summary = health_summary(
+                db, git_root, project_dir, config
+            )
+            if summary:
+                print(summary)
+            else:
+                print("Context Hooks: all clear, no issues found.")
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# context-hooks — Agent Context Intelligence System
+# Entry point / CLI dispatcher
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+export CONTEXT_HOOKS_HOME="$SCRIPT_DIR"
+
+CMD="${1:-help}"
+shift 2>/dev/null || true
+
+case "$CMD" in
+  hook)       python3 "$SCRIPT_DIR/lib/hooks.py" "$@" < /dev/stdin ;;
+  query)      python3 "$SCRIPT_DIR/lib/queries.py" "$@" ;;
+  xref)       python3 "$SCRIPT_DIR/lib/xref.py" "$@" ;;
+  health)     python3 "$SCRIPT_DIR/lib/health.py" "$@" ;;
+  profile)    python3 "$SCRIPT_DIR/lib/tags.py" profile "$@" ;;
+  bootstrap)  python3 "$SCRIPT_DIR/lib/commits.py" bootstrap "$@" ;;
+  knowledge)  python3 "$SCRIPT_DIR/lib/knowledge.py" "$@" ;;
+  memo)       python3 "$SCRIPT_DIR/lib/knowledge.py" memo "$@" ;;
+  status)     python3 "$SCRIPT_DIR/lib/status.py" "$@" ;;
+  prune)      python3 "$SCRIPT_DIR/lib/health.py" prune "$@" ;;
+  nudge)      python3 "$SCRIPT_DIR/lib/nudge.py" "$@" ;;
+  install)    bash "$SCRIPT_DIR/install.sh" "$@" ;;
+  uninstall)  bash "$SCRIPT_DIR/uninstall.sh" "$@" ;;
+  version)    echo "context-hooks v0.1.0" ;;
+  help|--help|-h)
+    cat <<'HELP'
+context-hooks — Agent Context Intelligence System
+
+Setup:     install [--adapter=claude-code|gemini|cursor|generic]
+           uninstall | bootstrap [--days=30]
+
+Hooks:     hook event|pre-compact|session-start|session-end
+
+Queries:   query parity|search|tag|file|bugs|related|recent|stats
+
+Analysis:  xref | health | profile [--days=30]
+
+Knowledge: knowledge store|search|list|promote|archive|restore|dismiss
+Memos:     memo send|list|read
+
+Maintain:  status | prune [--dry-run] | nudge enable|disable|list
+HELP
+    ;;
+  *)
+    echo "Unknown command: $CMD" >&2
+    echo "Run 'context-hooks help' for usage." >&2
+    exit 1
+    ;;
+esac

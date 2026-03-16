@@ -569,3 +569,23 @@ def run_xref(db, git_root: str, project_data_dir: str) -> str:
     ]
 
     return "\n".join(header + sources) + s1 + s2 + s3 + s4 + s5 + s6 + "\n".join(summary)
+
+
+def main():
+    """CLI entry point: context-hooks xref"""
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lib.db import ContextDB, data_dir, resolve_git_root
+
+    git_root = resolve_git_root(os.getcwd())
+    project_dir = data_dir(git_root)
+    db = ContextDB(project_dir)
+
+    try:
+        print(run_xref(db, git_root, project_dir))
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()

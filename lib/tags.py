@@ -378,3 +378,33 @@ def _dedup(tags: list[str]) -> list[str]:
             seen.add(t)
             result.append(t)
     return result
+
+
+def main():
+    """CLI: context-hooks profile [--days=N]"""
+    import argparse
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lib.db import data_dir, resolve_git_root
+
+    parser = argparse.ArgumentParser(description="Generate tag profile")
+    parser.add_argument("command", nargs="?", default="profile")
+    parser.add_argument("--days", type=int, default=30)
+    args = parser.parse_args()
+
+    git_root = resolve_git_root(os.getcwd())
+    project_dir = data_dir(git_root)
+
+    print(f"Generating tag profile from last {args.days} days...")
+    profile = generate_profile(git_root, args.days)
+    save_profile(project_dir, profile)
+
+    pp_count = len(profile.get("parallel_paths", []))
+    hf_count = len(profile.get("hot_files", {}))
+    dt_count = len(profile.get("directory_tags", {}))
+    print(f"  ✓ Profile: {dt_count} dirs, {hf_count} hot files, {pp_count} parallel paths")
+
+
+if __name__ == "__main__":
+    main()

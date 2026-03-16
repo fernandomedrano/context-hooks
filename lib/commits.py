@@ -1,4 +1,5 @@
 """Commit indexing and backfill — indexes git commits with auto-tagging."""
+import os
 import subprocess
 import sys
 
@@ -138,3 +139,43 @@ def backfill(db, git_root: str, days: int = 30, profile: dict | None = None):
             print(f"  indexed {count} commits...", file=sys.stderr)
 
     return count
+
+
+def main():
+    """CLI entry point: context-hooks bootstrap [--days=N]"""
+    import argparse
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lib.db import ContextDB, data_dir, resolve_git_root
+    from lib.tags import generate_profile, save_profile
+
+    parser = argparse.ArgumentParser(description="Bootstrap commit index")
+    parser.add_argument("command", nargs="?", default="bootstrap")
+    parser.add_argument("--days", type=int, default=30)
+    args = parser.parse_args()
+
+    git_root = resolve_git_root(os.getcwd())
+    project_dir = data_dir(git_root)
+    db = ContextDB(project_dir)
+    profile = load_profile(project_dir)
+
+    try:
+        # Generate profile first if it doesn't exist
+        if profile is None:
+            print(f"Generating tag profile from last {args.days} days...")
+            profile = generate_profile(git_root, args.days)
+            save_profile(project_dir, profile)
+            pp_count = len(profile.get("parallel_paths", []))
+            hf_count = len(profile.get("hot_files", {}))
+            dt_count = len(profile.get("directory_tags", {}))
+            print(f"  ✓ Profile: {dt_count} dirs, {hf_count} hot files, {pp_count} parallel paths")
+
+        print(f"Bootstrapping commits from last {args.days} days...")
+        count = backfill(db, git_root, args.days, profile)
+        print(f"  ✓ {count} commits indexed")
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()

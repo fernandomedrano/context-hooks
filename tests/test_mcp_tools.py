@@ -337,3 +337,31 @@ class TestQueryTools:
         result = json.loads(h({}))
         assert "knowledge" in result
         assert "memos" in result
+
+
+class TestToolRegistration:
+    def setup_method(self):
+        self.tmp = tempfile.mkdtemp()
+        self.ctx = {"project_dir": self.tmp, "git_root": self.tmp, "config": {}}
+
+    def test_register_all_tools(self):
+        from lib.mcp import MCPServer
+        from lib.mcp_tools import register_all_tools
+        server = MCPServer("test", "0.1")
+        register_all_tools(server, self.ctx)
+        assert len(server._tools) == 23
+
+    def test_register_with_compat(self):
+        from lib.mcp import MCPServer
+        from lib.mcp_tools import register_all_tools
+        server = MCPServer("test", "0.1")
+        register_all_tools(server, self.ctx, compat="agent-bridge")
+        assert len(server._tools) == 37
+
+    def test_compat_alias_calls_same_handler(self):
+        from lib.mcp import MCPServer
+        from lib.mcp_tools import register_all_tools
+        server = MCPServer("test", "0.1")
+        register_all_tools(server, self.ctx, compat="agent-bridge")
+        assert server._tools["store_knowledge"]["handler"] is server._tools["context_store_knowledge"]["handler"]
+        assert server._tools["send_memo"]["handler"] is server._tools["context_send_memo"]["handler"]

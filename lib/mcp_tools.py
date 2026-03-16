@@ -384,3 +384,77 @@ def build_handlers(ctx):
     handlers["context_get_project_context"] = context_get_project_context
 
     return handlers
+
+
+# ── Tool schemas ─────────────────────────────────────────────────────────────
+# Each entry: (native_name, compat_alias_or_None, description, input_schema)
+
+TOOL_SCHEMAS = [
+    # Knowledge tools
+    ("context_store_knowledge", "store_knowledge", "Store a knowledge entry with category, title, content, optional reasoning/tags/maturity",
+     {"type": "object", "properties": {"category": {"type": "string", "enum": ["architectural-decision", "coding-convention", "failure-class", "reference", "rejected-approach"]}, "title": {"type": "string"}, "content": {"type": "string"}, "reasoning": {"type": "string"}, "maturity": {"type": "string", "enum": ["signal", "pattern", "decision", "convention"], "default": "decision"}, "bug_refs": {"type": "string"}, "file_refs": {"type": "string"}, "tags": {"type": "string"}}, "required": ["category", "title", "content"]}),
+    ("context_search_knowledge", "search_knowledge", "FTS5 search over knowledge entries",
+     {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 10}}, "required": ["query"]}),
+    ("context_get_knowledge", "get_knowledge", "Get a specific knowledge entry by exact title (active only)",
+     {"type": "object", "properties": {"title": {"type": "string"}, "category": {"type": "string"}}, "required": ["title"]}),
+    ("context_list_knowledge", "list_knowledge", "List knowledge entries, optionally filtered by category",
+     {"type": "object", "properties": {"category": {"type": "string"}, "status": {"type": "string", "enum": ["active", "archived", "superseded", "dismissed"], "default": "active"}}}),
+    ("context_promote_knowledge", None, "Advance maturity: signal -> pattern -> decision -> convention",
+     {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}),
+    ("context_archive_knowledge", None, "Archive a knowledge entry (soft delete)",
+     {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}),
+    ("context_restore_knowledge", None, "Restore an archived or dismissed entry to active",
+     {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}),
+    ("context_supersede_knowledge", None, "Replace a knowledge entry with a new one, preserving lineage",
+     {"type": "object", "properties": {"old_id": {"type": "integer"}, "category": {"type": "string", "enum": ["architectural-decision", "coding-convention", "failure-class", "reference", "rejected-approach"]}, "title": {"type": "string"}, "content": {"type": "string"}, "reasoning": {"type": "string"}}, "required": ["old_id", "category", "title", "content"]}),
+    # Memo tools
+    ("context_send_memo", "send_memo", "Send a memo to a specific agent",
+     {"type": "object", "properties": {"from_agent": {"type": "string"}, "to_agent": {"type": "string"}, "subject": {"type": "string"}, "content": {"type": "string"}, "expires_at": {"type": "string"}}, "required": ["from_agent", "to_agent", "subject", "content"]}),
+    ("context_check_memos", "check_memos", "List memos, optionally filtered to unread or by recipient",
+     {"type": "object", "properties": {"unread_only": {"type": "boolean", "default": False}, "to_agent": {"type": "string"}}}),
+    ("context_read_memo", "read_memo", "Read a memo and mark it as read",
+     {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}),
+    ("context_reply_memo", "reply_memo", "Reply to a memo (creates/continues thread)",
+     {"type": "object", "properties": {"memo_id": {"type": "integer"}, "from_agent": {"type": "string"}, "content": {"type": "string"}}, "required": ["memo_id", "from_agent", "content"]}),
+    ("context_broadcast", "broadcast", "Send a broadcast memo to all agents with priority",
+     {"type": "object", "properties": {"from_agent": {"type": "string"}, "subject": {"type": "string"}, "content": {"type": "string"}, "priority": {"type": "string", "enum": ["normal", "high", "urgent"], "default": "normal"}}, "required": ["from_agent", "subject", "content"]}),
+    ("context_list_threads", "list_threads", "List conversation threads with summary",
+     {"type": "object", "properties": {"limit": {"type": "integer", "default": 20}}}),
+    # Task & state tools
+    ("context_handoff_task", "handoff_task", "Structured task handoff between agents",
+     {"type": "object", "properties": {"from_agent": {"type": "string"}, "to_agent": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"}, "relevant_files": {"type": "string"}, "context": {"type": "string"}, "blockers": {"type": "string"}, "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"}}, "required": ["from_agent", "to_agent", "title", "description"]}),
+    ("context_set_shared_state", "set_shared_state", "Set key-value state visible to all agents",
+     {"type": "object", "properties": {"key": {"type": "string"}, "value": {"type": "string"}, "updated_by": {"type": "string"}}, "required": ["key", "value", "updated_by"]}),
+    ("context_get_shared_state", "get_shared_state", "Get shared state by key or all state",
+     {"type": "object", "properties": {"key": {"type": "string"}}}),
+    # Query & analysis tools
+    ("context_query_commits", None, "Search indexed commits by term, tag, file, or list recent/bugs/stats",
+     {"type": "object", "properties": {"mode": {"type": "string", "enum": ["search", "tag", "file", "bugs", "related", "recent", "stats"]}, "term": {"type": "string"}, "limit": {"type": "integer", "default": 20}}, "required": ["mode"]}),
+    ("context_check_parity", None, "Show parallel path alerts (solo edits without companion)",
+     {"type": "object", "properties": {}}),
+    ("context_run_xref", None, "Cross-reference report across all memory layers",
+     {"type": "object", "properties": {}}),
+    ("context_get_health", None, "Session health summary",
+     {"type": "object", "properties": {}}),
+    ("context_get_profile", None, "Regenerate and return auto-discovered file pair patterns",
+     {"type": "object", "properties": {"days": {"type": "integer", "default": 30}}}),
+    ("context_get_project_context", "get_context_for_project", "Composite: health + unread memos + recent knowledge",
+     {"type": "object", "properties": {"include_health": {"type": "boolean", "default": True}, "include_memos": {"type": "boolean", "default": True}, "include_knowledge": {"type": "boolean", "default": True}, "knowledge_limit": {"type": "integer", "default": 10}}}),
+]
+
+
+def register_all_tools(server, ctx, compat=None):
+    """Register all tools on an MCPServer. If compat='agent-bridge', also register aliases."""
+    handlers = build_handlers(ctx)
+
+    for native_name, alias, description, schema in TOOL_SCHEMAS:
+        handler = handlers[native_name]
+        server.register_tool(
+            name=native_name, description=description,
+            input_schema=schema, handler=handler,
+        )
+        if compat == "agent-bridge" and alias:
+            server.register_tool(
+                name=alias, description=description,
+                input_schema=schema, handler=handler,
+            )

@@ -18,6 +18,7 @@ class TestKnowledgeTools:
         self.db = ContextDB(self.tmp)
         self.ctx = {
             "project_dir": self.tmp,
+            "cluster_dir": self.tmp,
             "git_root": self.tmp,
             "config": {},
         }
@@ -120,7 +121,7 @@ class TestMemoTools:
     def setup_method(self):
         self.tmp = tempfile.mkdtemp()
         self.db = ContextDB(self.tmp)
-        self.ctx = {"project_dir": self.tmp, "git_root": self.tmp, "config": {}}
+        self.ctx = {"project_dir": self.tmp, "cluster_dir": self.tmp, "git_root": self.tmp, "config": {}}
 
     def teardown_method(self):
         self.db.close()
@@ -220,7 +221,7 @@ class TestTaskStateTools:
     def setup_method(self):
         self.tmp = tempfile.mkdtemp()
         self.db = ContextDB(self.tmp)
-        self.ctx = {"project_dir": self.tmp, "git_root": self.tmp, "config": {}}
+        self.ctx = {"project_dir": self.tmp, "cluster_dir": self.tmp, "git_root": self.tmp, "config": {}}
 
     def teardown_method(self):
         self.db.close()
@@ -266,7 +267,7 @@ class TestQueryTools:
     def setup_method(self):
         self.tmp = tempfile.mkdtemp()
         self.db = ContextDB(self.tmp)
-        self.ctx = {"project_dir": self.tmp, "git_root": self.tmp, "config": {}}
+        self.ctx = {"project_dir": self.tmp, "cluster_dir": self.tmp, "git_root": self.tmp, "config": {}}
 
     def teardown_method(self):
         self.db.close()
@@ -342,7 +343,7 @@ class TestQueryTools:
 class TestToolRegistration:
     def setup_method(self):
         self.tmp = tempfile.mkdtemp()
-        self.ctx = {"project_dir": self.tmp, "git_root": self.tmp, "config": {}}
+        self.ctx = {"project_dir": self.tmp, "cluster_dir": self.tmp, "git_root": self.tmp, "config": {}}
 
     def test_register_all_tools(self):
         from lib.mcp import MCPServer
@@ -365,3 +366,69 @@ class TestToolRegistration:
         register_all_tools(server, self.ctx, compat="agent-bridge")
         assert server._tools["store_knowledge"]["handler"] is server._tools["context_store_knowledge"]["handler"]
         assert server._tools["send_memo"]["handler"] is server._tools["context_send_memo"]["handler"]
+
+
+class TestClusterDBRouting:
+    """Tests that MCP handlers route to correct DB based on cluster config."""
+
+    def setup_method(self):
+        self.master_root = tempfile.mkdtemp()
+        from lib.db import data_dir
+        self.master_dir = data_dir(self.master_root)
+        self.master_db = ContextDB(self.master_dir)
+
+        self.satellite_dir = tempfile.mkdtemp()
+        os.makedirs(self.satellite_dir, exist_ok=True)
+        ContextDB(self.satellite_dir)  # create local DB
+
+        with open(os.path.join(self.satellite_dir, "cluster.yaml"), "w") as f:
+            f.write(f"cluster: test\nmaster: {self.master_root}\n")
+
+        from lib.db import resolve_cluster_db
+        self.cluster_dir = resolve_cluster_db(self.satellite_dir)
+        self.ctx = {
+            "project_dir": self.satellite_dir,
+            "cluster_dir": self.cluster_dir,
+            "git_root": self.satellite_dir,
+            "config": {},
+        }
+
+    def teardown_method(self):
+        self.master_db.close()
+
+    def test_memo_handler_uses_cluster_db(self):
+        from lib.mcp_tools import build_handlers
+        handlers = build_handlers(self.ctx)
+        handlers["context_send_memo"]({
+            "from_agent": "test", "subject": "Clustered", "content": "Hello"
+        })
+        memos = self.master_db.query("SELECT subject FROM memos")
+        assert any("Clustered" in m[0] for m in memos)
+
+        sat_db = ContextDB(self.satellite_dir)
+        sat_memos = sat_db.query("SELECT COUNT(*) FROM memos")
+        assert sat_memos[0][0] == 0
+        sat_db.close()
+
+    def test_knowledge_handler_uses_cluster_db(self):
+        from lib.mcp_tools import build_handlers
+        handlers = build_handlers(self.ctx)
+        handlers["context_store_knowledge"]({
+            "category": "reference", "title": "Cluster test", "content": "Routed"
+        })
+        entries = self.master_db.query("SELECT title FROM knowledge WHERE status='active'")
+        assert any("Cluster test" in e[0] for e in entries)
+
+    def test_reply_memo_reads_and_writes_same_cluster_db(self):
+        from lib.mcp_tools import build_handlers
+        handlers = build_handlers(self.ctx)
+        handlers["context_send_memo"]({
+            "from_agent": "sender", "subject": "Thread test", "content": "Original"
+        })
+        memos = self.master_db.query("SELECT id FROM memos ORDER BY id DESC LIMIT 1")
+        memo_id = memos[0][0]
+        handlers["context_reply_memo"]({
+            "memo_id": memo_id, "from_agent": "replier", "content": "Reply"
+        })
+        threads = self.master_db.query("SELECT thread_id FROM memos WHERE thread_id IS NOT NULL")
+        assert len(threads) >= 2

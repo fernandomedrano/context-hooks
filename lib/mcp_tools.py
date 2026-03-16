@@ -12,9 +12,13 @@ from lib.db import ContextDB
 from lib import knowledge
 
 
-def _open_db(ctx):
-    """Open a fresh DB connection for this tool call."""
+def _open_local_db(ctx):
+    """Open a fresh local DB connection (events, commits, tags)."""
     return ContextDB(ctx["project_dir"])
+
+def _open_cluster_db(ctx):
+    """Open a fresh cluster DB connection (memos, knowledge, shared_state)."""
+    return ContextDB(ctx["cluster_dir"])
 
 
 def build_handlers(ctx):
@@ -24,7 +28,7 @@ def build_handlers(ctx):
     # ── Knowledge tools ──────────────────────────────────────────────────
 
     def context_store_knowledge(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             knowledge.store(
                 db, args["category"], args["title"], args["content"],
@@ -39,7 +43,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_search_knowledge(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             results = knowledge.search(db, args["query"], limit=args.get("limit", 10))
             return json.dumps(results)
@@ -47,7 +51,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_get_knowledge(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             title = args["title"]
             category = args.get("category")
@@ -71,7 +75,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_list_knowledge(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             entries = knowledge.list_entries(
                 db, category=args.get("category"), status=args.get("status", "active")
@@ -81,7 +85,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_promote_knowledge(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             knowledge.promote(db, args["id"])
             return f"Promoted entry {args['id']}"
@@ -89,7 +93,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_archive_knowledge(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             knowledge.archive(db, args["id"])
             return f"Archived entry {args['id']}"
@@ -97,7 +101,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_restore_knowledge(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             knowledge.restore(db, args["id"])
             return f"Restored entry {args['id']}"
@@ -105,7 +109,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_supersede_knowledge(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             knowledge.supersede(
                 db, args["old_id"], args["category"], args["title"],
@@ -127,7 +131,7 @@ def build_handlers(ctx):
     # ── Memo tools ───────────────────────────────────────────────────────
 
     def context_send_memo(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             knowledge.send_memo(
                 db, args["from_agent"], args["subject"], args["content"],
@@ -139,7 +143,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_check_memos(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             to_agent = args.get("to_agent")
             unread_only = args.get("unread_only", False)
@@ -163,7 +167,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_read_memo(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             memo = knowledge.read_memo(db, args["id"])
             return json.dumps(memo)
@@ -171,7 +175,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_reply_memo(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             memo_id = args["memo_id"]
             rows = db.query(
@@ -199,7 +203,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_broadcast(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             db.insert_memo(
                 from_agent=args["from_agent"],
@@ -213,7 +217,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_list_threads(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             limit = args.get("limit", 20)
             rows = db.query(
@@ -242,7 +246,7 @@ def build_handlers(ctx):
     # ── Task & state tools ───────────────────────────────────────────────
 
     def context_handoff_task(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             task_content = json.dumps({
                 "description": args["description"],
@@ -263,7 +267,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_set_shared_state(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             db.upsert_shared_state(
                 key=args["key"], value=args["value"], updated_by=args["updated_by"]
@@ -273,7 +277,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_get_shared_state(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             key = args.get("key")
             rows = db.get_shared_state(key)
@@ -300,7 +304,7 @@ def build_handlers(ctx):
     _TERM_REQUIRED_MODES = {"search", "tag", "file", "related"}
 
     def context_query_commits(args):
-        db = _open_db(ctx)
+        db = _open_local_db(ctx)
         try:
             mode = args["mode"]
             term = args.get("term")
@@ -329,14 +333,14 @@ def build_handlers(ctx):
             db.close()
 
     def context_check_parity(args):
-        db = _open_db(ctx)
+        db = _open_local_db(ctx)
         try:
             return queries.query_parity(db)
         finally:
             db.close()
 
     def context_run_xref(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             from lib.xref import run_xref
             return run_xref(db, ctx["git_root"], ctx["project_dir"])
@@ -344,7 +348,7 @@ def build_handlers(ctx):
             db.close()
 
     def context_get_health(args):
-        db = _open_db(ctx)
+        db = _open_cluster_db(ctx)
         try:
             from lib.health import health_summary
             result = health_summary(db, ctx["git_root"], ctx["project_dir"], ctx["config"])
@@ -360,21 +364,23 @@ def build_handlers(ctx):
         return json.dumps(profile)
 
     def context_get_project_context(args):
-        db = _open_db(ctx)
+        cluster_db = _open_cluster_db(ctx)
+        local_db = _open_local_db(ctx)
         try:
             result = {}
             if args.get("include_health", True):
                 from lib.health import health_summary
-                result["health"] = health_summary(db, ctx["git_root"], ctx["project_dir"], ctx["config"]) or "OK"
+                result["health"] = health_summary(cluster_db, ctx["git_root"], ctx["project_dir"], ctx["config"]) or "OK"
             if args.get("include_memos", True):
-                result["memos"] = knowledge.list_memos(db, unread_only=True)
+                result["memos"] = knowledge.list_memos(cluster_db, unread_only=True)
             if args.get("include_knowledge", True):
                 limit = args.get("knowledge_limit", 10)
-                entries = knowledge.list_entries(db)
+                entries = knowledge.list_entries(cluster_db)
                 result["knowledge"] = entries[:limit]
             return json.dumps(result)
         finally:
-            db.close()
+            cluster_db.close()
+            local_db.close()
 
     handlers["context_query_commits"] = context_query_commits
     handlers["context_check_parity"] = context_check_parity
@@ -465,7 +471,7 @@ def register_all_tools(server, ctx, compat=None):
 def main():
     """Start the MCP server. Called by: bin/context-hooks mcp [flags]"""
     import argparse
-    from lib.db import data_dir, resolve_git_root
+    from lib.db import data_dir, resolve_git_root, resolve_cluster_db
     from lib.config import load_config
     from lib.mcp import MCPServer
 
@@ -482,10 +488,12 @@ def main():
         git_root = resolve_git_root(os.getcwd())
 
     project_dir = data_dir(git_root)
+    cluster_dir = resolve_cluster_db(project_dir)
     config = load_config(project_dir)
 
     ctx = {
         "project_dir": project_dir,
+        "cluster_dir": cluster_dir,
         "git_root": git_root,
         "config": config,
     }

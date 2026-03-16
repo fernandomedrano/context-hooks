@@ -7,17 +7,18 @@ Agent handoff document. Any agent on any tool can pick up from here.
 
 **As of:** 2026-03-15
 
-**Where we are:** v0.2 MCP server adapter is complete and tested (200 tests, 23 tools + 14 compat aliases). All core features (F1-F10) plus MCP server are implemented. Ready for real-world end-to-end testing.
+**Where we are:** v0.2 MCP server + dogfooding fixes complete (215 tests). Schema auto-migration and CLI flag syntax for cross-project memo send shipped. Cross-agent memo exchange proven between KADE2 and context-hooks.
 
-**Immediate next task:** Configure `.mcp.json` and test the MCP server end-to-end with Claude Code after IDE restart.
+**Immediate next task:** Design cross-project memo routing layer — formalize address discovery, replace manual path resolution.
 
 **Blocked / waiting:**
-- Agent-bridge memo to KADE2 — needs MCP connection from a session with agent-bridge configured
+- Nothing currently blocked
 
 **Priority queue:**
-1. End-to-end MCP server test with Claude Code
-2. Task 13: Migration from v1 (import from old DB format + agent-bridge data)
-3. Gemini/Cursor/VS Code adapters
+1. Cross-project memo routing design
+2. Knowledge durability: dual-write (SQLite + git-tracked markdown)
+3. End-to-end MCP server test with Claude Code
+4. Task 13: Migration from v1
 
 ---
 

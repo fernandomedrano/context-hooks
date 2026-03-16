@@ -82,6 +82,11 @@ Full design spec at: (originally at KADE2 project)
 ## What's Not Done Yet (v0.2 candidates)
 
 - **Task 13: Migration from v1** — Import from `~/.claude/context-events/*.db` and `data/agent-bridge/knowledge/`. Schema differs (v1 lacks `short_hash`, `author`, `maturity` columns).
+- **MCP server adapter (HIGH PRIORITY)** — context-hooks currently exposes its knowledge store and memos via CLI only. The KADE2 project (our origin project) uses an existing MCP server called `agent-bridge` (`mcp__agent-bridge__*`) for the same purpose — `send_memo`, `store_knowledge`, `search_knowledge`, etc. That MCP backs its data with flat markdown files + a JSON blob at `data/agent-bridge/`. context-hooks should be able to replace agent-bridge entirely by exposing its SQLite-backed knowledge and memo tables as MCP tools. This would give any AI agent native tool access to the knowledge store without going through the CLI. Design questions:
+  - Same MCP tool names as agent-bridge (drop-in replacement) or new names?
+  - Per-project scope (one MCP server per project) or global?
+  - The existing agent-bridge also has `handoff_task`, `broadcast`, `get_shared_state` — do we replicate all of these or just knowledge + memos?
+  - KADE2's ADR-016 bug-to-persona flywheel step 4 says "store_knowledge in agent-bridge" — this needs to keep working during any transition.
 - **Gemini/Cursor/VS Code adapters** — Only Claude Code adapter exists. Others need hook format translation.
 - **Flywheel factory** — Guided flow for defining project-specific flywheels.
 - **Team sync** — Share knowledge entries via git-committed export.

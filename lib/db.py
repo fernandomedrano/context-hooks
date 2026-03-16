@@ -139,6 +139,34 @@ def resolve_git_root(cwd: str) -> str:
     return cwd
 
 
+def resolve_cluster_db(project_dir: str) -> str:
+    """Return the cluster master's data dir, or project_dir if standalone.
+
+    Args:
+        project_dir: The local project's data directory (not git root).
+
+    Returns:
+        The master's data directory if clustered, or project_dir if standalone.
+    """
+    cluster_path = os.path.join(project_dir, "cluster.yaml")
+    if os.path.exists(cluster_path):
+        from lib.config import _parse_simple_yaml
+        with open(cluster_path) as f:
+            config = _parse_simple_yaml(f.read())
+        master_root = config.get("master")
+        if master_root and master_root.strip():
+            master_dir = data_dir(master_root)
+            master_db = os.path.join(master_dir, "context.db")
+            if not os.path.exists(master_db):
+                import sys
+                print(f"WARNING: cluster master DB not found at {master_db}. "
+                      f"Check master path in {cluster_path}. Falling back to standalone.",
+                      file=sys.stderr)
+                return project_dir
+            return master_dir
+    return project_dir
+
+
 class ContextDB:
     """SQLite database wrapper. All writes use parameterized queries."""
 

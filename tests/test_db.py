@@ -6,7 +6,7 @@ import sys
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.db import ContextDB, project_hash
+from lib.db import ContextDB, project_hash, data_dir, resolve_cluster_db
 
 
 class TestProjectHash:
@@ -362,6 +362,57 @@ class TestSchemaMigration:
         version = db.query("SELECT version FROM schema_version")[0][0]
         assert version >= 2
         db.close()
+
+
+class TestResolveClusterDb:
+    """Tests for cluster resolution logic."""
+
+    def test_standalone_returns_project_dir(self):
+        """No cluster.yaml → returns project_dir unchanged."""
+        tmp = tempfile.mkdtemp()
+        result = resolve_cluster_db(tmp)
+        assert result == tmp
+
+    def test_cluster_resolves_to_master(self):
+        """cluster.yaml with valid master → returns master's data dir."""
+        master_root = tempfile.mkdtemp()
+        master_dir = data_dir(master_root)
+        ContextDB(master_dir)  # creates context.db
+        satellite_dir = tempfile.mkdtemp()
+        os.makedirs(satellite_dir, exist_ok=True)
+        with open(os.path.join(satellite_dir, "cluster.yaml"), "w") as f:
+            f.write(f"cluster: test-cluster\nmaster: {master_root}\n")
+        result = resolve_cluster_db(satellite_dir)
+        assert result == master_dir
+        assert result != satellite_dir
+
+    def test_empty_master_falls_back(self):
+        """cluster.yaml with empty master → falls back to standalone."""
+        tmp = tempfile.mkdtemp()
+        with open(os.path.join(tmp, "cluster.yaml"), "w") as f:
+            f.write("cluster: test\nmaster:\n")
+        result = resolve_cluster_db(tmp)
+        assert result == tmp
+
+    def test_bad_master_path_falls_back_with_warning(self, capsys):
+        """cluster.yaml pointing to nonexistent DB → falls back with warning."""
+        tmp = tempfile.mkdtemp()
+        with open(os.path.join(tmp, "cluster.yaml"), "w") as f:
+            f.write("cluster: test\nmaster: /nonexistent/path/to/repo\n")
+        result = resolve_cluster_db(tmp)
+        assert result == tmp
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    def test_master_points_to_self(self):
+        """Master project's cluster.yaml points to itself."""
+        master_root = tempfile.mkdtemp()
+        master_dir = data_dir(master_root)
+        ContextDB(master_dir)  # creates context.db
+        with open(os.path.join(master_dir, "cluster.yaml"), "w") as f:
+            f.write(f"cluster: test\nmaster: {master_root}\n")
+        result = resolve_cluster_db(master_dir)
+        assert result == master_dir
 
 
 class TestConfig:

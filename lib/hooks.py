@@ -5,7 +5,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.db import ContextDB, data_dir, resolve_git_root
+from lib.db import ContextDB, data_dir, resolve_git_root, resolve_cluster_db
 from lib.config import load_config
 from lib.events import handle_event
 from lib.snapshot import build_snapshot, save_snapshot, recovery_response
@@ -22,6 +22,14 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
     project_dir = data_dir(git_root)
     db = ContextDB(project_dir)
     config = load_config(project_dir)
+
+    cluster_db = None
+    def get_cluster_db():
+        nonlocal cluster_db
+        if cluster_db is None:
+            cluster_dir = resolve_cluster_db(project_dir)
+            cluster_db = ContextDB(cluster_dir) if cluster_dir != project_dir else db
+        return cluster_db
 
     try:
         if hook_type == "event":
@@ -46,7 +54,7 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
                     # Check flywheel nudge
                     if config.get("nudge.flywheel"):
                         flywheel_warn = check_flywheels(
-                            db, config, commit_info.get("tags", "")
+                            get_cluster_db(), config, commit_info.get("tags", "")
                         )
                         if flywheel_warn:
                             warnings.extend(flywheel_warn)
@@ -69,7 +77,7 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
             elif source == "startup":
                 # Health check injection
                 from lib.health import health_summary
-                summary = health_summary(db, git_root, project_dir, config)
+                summary = health_summary(db, get_cluster_db(), git_root, project_dir, config)
                 if summary:
                     return json.dumps({"additionalContext": summary})
                 return None
@@ -84,6 +92,8 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
 
     finally:
         db.close()
+        if cluster_db is not None and cluster_db is not db:
+            cluster_db.close()
 
 
 def main():

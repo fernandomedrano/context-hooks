@@ -87,17 +87,54 @@ new_hooks = {
     }],
 }
 
-# Merge: add our hooks without removing existing ones
+# Known v0.1 shell script patterns to remove
+v1_patterns = [
+    "event-logger.sh", "commit-journal.sh", "session-start.sh",
+    "session-end.sh", "pre-compact.sh", "compact-recovery.sh",
+    "backfill-commits.sh", "tag-engine.sh", "memory-xref.sh",
+    "query-commits.sh",
+]
+
+def is_v1_hook(cmd):
+    """Check if a hook command references a v0.1 shell script."""
+    return any(p in cmd for p in v1_patterns)
+
+def is_our_hook(cmd):
+    """Check if a hook command is from context-hooks (any version)."""
+    return "context-hooks" in cmd or "hook-shim" in cmd or is_v1_hook(cmd)
+
+# For each event type: remove old v0.1/v0.2 hooks, then add ours
 for event, entries in new_hooks.items():
     existing = hooks.get(event, [])
-    # Check if context-hooks is already installed
-    already_installed = any(
-        "context-hooks" in h.get("command", "") or "hook-shim" in h.get("command", "")
-        for entry in existing for h in entry.get("hooks", [])
-    )
-    if not already_installed:
-        existing.extend(entries)
-    hooks[event] = existing
+    # Filter out our old hooks (v0.1 scripts and previous shim installs)
+    cleaned = []
+    removed = 0
+    for entry in existing:
+        entry_hooks = entry.get("hooks", [])
+        if any(is_our_hook(h.get("command", "")) for h in entry_hooks):
+            removed += 1
+        else:
+            cleaned.append(entry)
+    if removed > 0:
+        print(f"    Removed {removed} old context-hooks hook(s) from {event}")
+    cleaned.extend(entries)
+    hooks[event] = cleaned
+
+# Also clean v0.1 hooks from event types we don't define (e.g. Stop)
+for event in list(hooks.keys()):
+    if event in new_hooks:
+        continue  # Already handled above
+    existing = hooks[event]
+    cleaned = [
+        entry for entry in existing
+        if not any(is_our_hook(h.get("command", "")) for h in entry.get("hooks", []))
+    ]
+    if len(cleaned) < len(existing):
+        print(f"    Removed {len(existing) - len(cleaned)} old context-hooks hook(s) from {event}")
+    if cleaned:
+        hooks[event] = cleaned
+    else:
+        del hooks[event]
 
 settings["hooks"] = hooks
 

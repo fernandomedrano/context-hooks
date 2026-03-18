@@ -81,6 +81,9 @@ new_hooks = {
     }, {
         "matcher": "startup",
         "hooks": [{"type": "command", "command": f"bash {shim_path} session-start", "timeout": 10}]
+    }, {
+        "matcher": "resume",
+        "hooks": [{"type": "command", "command": f"bash {shim_path} session-start", "timeout": 10}]
     }],
 }
 

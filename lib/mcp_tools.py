@@ -362,9 +362,9 @@ def build_handlers(ctx):
         local_db = _open_local_db(ctx)
         cluster_db = _open_cluster_db(ctx)
         try:
-            from lib.health import health_summary
-            result = health_summary(local_db, cluster_db, ctx["git_root"], ctx["project_dir"], ctx["config"])
-            return result or "No health issues detected."
+            from lib.health import health_summary, format_health_text
+            report = health_summary(local_db, cluster_db, ctx["git_root"], ctx["project_dir"], ctx["config"])
+            return format_health_text(report) if report else "No health issues detected."
         finally:
             local_db.close()
             cluster_db.close()
@@ -382,8 +382,9 @@ def build_handlers(ctx):
         try:
             result = {}
             if args.get("include_health", True):
-                from lib.health import health_summary
-                result["health"] = health_summary(local_db, cluster_db, ctx["git_root"], ctx["project_dir"], ctx["config"]) or "OK"
+                from lib.health import health_summary, format_health_text
+                report = health_summary(local_db, cluster_db, ctx["git_root"], ctx["project_dir"], ctx["config"])
+                result["health"] = format_health_text(report) if report else "OK"
             if args.get("include_memos", True):
                 result["memos"] = knowledge.list_memos(cluster_db, unread_only=True)
             if args.get("include_knowledge", True):

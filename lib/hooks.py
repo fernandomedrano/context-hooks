@@ -74,13 +74,27 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
 
             if source == "compact":
                 return recovery_response(project_dir)
-            elif source == "startup":
+            elif source in ("startup", "resume"):
                 # Health check injection
-                from lib.health import health_summary
-                summary = health_summary(db, get_cluster_db(), git_root, project_dir, config)
-                if summary:
-                    return json.dumps({"additionalContext": summary})
-                return None
+                from lib.health import health_summary, format_health_text
+                report = health_summary(db, get_cluster_db(), git_root, project_dir, config)
+                if not report:
+                    return None
+
+                result = {}
+                # Critical issues (DB missing, hooks broken) → systemMessage
+                if report.get("critical"):
+                    result["systemMessage"] = (
+                        "CONTEXT-HOOKS HEALTH WARNING:\n"
+                        + "\n".join(report["critical"])
+                    )
+                # Soft warnings (unread memos, bug gaps) → additionalContext
+                if report.get("warnings"):
+                    result["additionalContext"] = (
+                        "Context Hooks:\n"
+                        + "\n".join(report["warnings"])
+                    )
+                return json.dumps(result) if result else None
             else:
                 return None
 

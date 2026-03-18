@@ -11,10 +11,22 @@ from datetime import datetime, timedelta
 
 # ── Health summary ───────────────────────────────────────────────────────────
 
-def health_summary(local_db, cluster_db, git_root: str, project_data_dir: str, config: dict) -> str | None:
-    """Return a short health summary string, or None if everything looks fine.
+def health_summary(local_db, cluster_db, git_root: str, project_data_dir: str, config: dict) -> dict | None:
+    """Return a health report dict, or None if everything looks fine.
 
-    Checks:
+    Returns dict with:
+      - critical: list of critical issues (DB missing data, hooks broken)
+      - warnings: list of soft warnings (unread memos, bug gaps, stale rules)
+
+    Critical issues should be surfaced as systemMessage (hard to miss).
+    Warnings should be surfaced as additionalContext (informational).
+
+    Checks (infrastructure — critical):
+      - Zero events total (hooks never fired)
+      - No events in 24 hours (hooks stopped working)
+      - Zero commits indexed (bootstrap never ran)
+
+    Checks (knowledge — warnings):
       - Bug knowledge gaps (BUG-NNN commits without failure-class knowledge)
       - Stale rules (rule_validations not validated in 60+ days)
       - Emerging parallel paths (solo-a/solo-b tags above threshold)
@@ -28,33 +40,77 @@ def health_summary(local_db, cluster_db, git_root: str, project_data_dir: str, c
     if config.get('nudge.health-summary') is False:
         return None
 
-    lines = []
+    critical = []
+    warnings = []
+
+    # --- Infrastructure checks (critical) ---
+    infra = _check_infrastructure(local_db)
+    critical.extend(infra)
+
+    # --- Knowledge checks (warnings) ---
 
     # Bug knowledge gaps (commits in local_db, knowledge in cluster_db)
     bug_gap_count = _count_bug_gaps(local_db, cluster_db, git_root)
     if bug_gap_count > 0:
-        lines.append(f"* {bug_gap_count} BUG commit(s) missing failure class docs")
+        warnings.append(f"* {bug_gap_count} BUG commit(s) missing failure class docs")
 
     # Stale rules (rule_validations in local_db)
     stale_rules = _find_stale_rules(local_db, days=60)
     if stale_rules:
         for name in stale_rules[:3]:
-            lines.append(f'* 1 rule not validated in 60d: "{name}"')
+            warnings.append(f'* 1 rule not validated in 60d: "{name}"')
 
     # Emerging parallel paths (commits in local_db)
     emerging_count = _count_emerging_pairs(local_db, git_root)
     if emerging_count > 0:
-        lines.append(f"* {emerging_count} emerging file pair(s) not in profile")
+        warnings.append(f"* {emerging_count} emerging file pair(s) not in profile")
 
     # Unread memos (memos in cluster_db)
     unread = cluster_db.query("SELECT COUNT(*) FROM memos WHERE read = 0")[0][0]
     if unread > 0:
-        lines.append(f"* {unread} unread memo(s)")
+        warnings.append(f"* {unread} unread memo(s)")
 
-    if not lines:
+    if not critical and not warnings:
         return None
 
+    return {"critical": critical, "warnings": warnings}
+
+
+def format_health_text(report: dict) -> str:
+    """Format a health report dict as a single text block (legacy compat)."""
+    lines = []
+    if report.get("critical"):
+        lines.extend(report["critical"])
+    if report.get("warnings"):
+        lines.extend(report["warnings"])
     return "Context Hooks:\n" + "\n".join(lines)
+
+
+def _check_infrastructure(local_db) -> list[str]:
+    """Check infrastructure health: events firing, commits indexed.
+
+    Returns list of critical issue strings (empty if healthy).
+    """
+    issues = []
+
+    # Event tracking
+    event_count = local_db.query("SELECT COUNT(*) FROM events")[0][0]
+    if event_count == 0:
+        issues.append("* Event tracking has ZERO events — hooks may not be firing")
+    else:
+        recent = local_db.query(
+            "SELECT COUNT(*) FROM events "
+            "WHERE timestamp > datetime('now', '-24 hours', 'localtime')"
+        )[0][0]
+        if recent == 0:
+            issues.append("* No events in last 24 hours — event hooks may have stopped")
+
+    # Commit index
+    commit_count = local_db.query("SELECT COUNT(*) FROM commits")[0][0]
+    if commit_count == 0:
+        issues.append("* Commit index is empty — run: context-hooks bootstrap")
+
+    return issues
 
 
 # ── Prune / auto-hygiene ─────────────────────────────────────────────────────
@@ -295,11 +351,11 @@ def main():
             dry_run = "--dry-run" in sys.argv
             print(prune(local_db, cluster_db, git_root, project_dir, dry_run=dry_run))
         else:
-            summary = health_summary(
+            report = health_summary(
                 local_db, cluster_db, git_root, project_dir, config
             )
-            if summary:
-                print(summary)
+            if report:
+                print(format_health_text(report))
             else:
                 print("Context Hooks: all clear, no issues found.")
     finally:

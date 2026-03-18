@@ -13,6 +13,10 @@ from lib.commits import index_commit
 from lib.tags import load_profile
 from lib.nudge import check_parity, check_flywheels
 from lib.edit_nudge import check_edit_nudges
+from lib.output_store import (
+    index_output, summarize_output, make_source_label,
+    get_output_text, cleanup_session_outputs, OUTPUT_THRESHOLD,
+)
 
 
 def handle_hook(hook_type: str, payload: dict) -> str | None:
@@ -36,6 +40,19 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
         if hook_type == "event":
             result = handle_event(payload, db, session_id, git_root)
 
+            # Check if tool output is large enough to index
+            tool_name = payload.get("tool_name", "")
+            output_text = get_output_text(tool_name, payload.get("tool_response", {}))
+            additional_parts = []
+
+            if output_text and len(output_text) > OUTPUT_THRESHOLD:
+                source_label = make_source_label(tool_name, payload.get("tool_input", {}))
+                chunk_count = index_output(db, session_id, source_label, output_text)
+                if chunk_count > 0:
+                    additional_parts.append(
+                        summarize_output(output_text, source_label, chunk_count)
+                    )
+
             # If a file was edited/written, check edit-time nudges
             if result and result.get("event_type") in ("file_edit", "file_write"):
                 file_path = payload.get("tool_input", {}).get("file_path", "")
@@ -49,15 +66,13 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
                         project_data_dir=project_dir,
                         session_id=session_id,
                     )
-                    if nudges:
-                        return json.dumps({"additionalContext": "\n".join(nudges)})
+                    additional_parts.extend(nudges)
 
             # If a commit was detected, index it and check nudges
             if result and result.get("is_commit"):
                 profile = load_profile(project_dir)
                 commit_info = index_commit(db, git_root, session_id, profile)
 
-                warnings = []
                 if commit_info:
                     # Check parity nudge
                     if config.get("nudge.parity"):
@@ -66,18 +81,17 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
                             profile
                         )
                         if parity_warn:
-                            warnings.append(parity_warn)
+                            additional_parts.append(parity_warn)
 
                     # Check flywheel nudge
                     if config.get("nudge.flywheel"):
                         flywheel_warn = check_flywheels(
                             get_cluster_db(), config, commit_info.get("tags", "")
                         )
-                        if flywheel_warn:
-                            warnings.extend(flywheel_warn)
+                        additional_parts.extend(flywheel_warn)
 
-                if warnings:
-                    return json.dumps({"additionalContext": "\n".join(warnings)})
+            if additional_parts:
+                return json.dumps({"additionalContext": "\n".join(additional_parts)})
 
             return None
 
@@ -92,9 +106,10 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
             if source == "compact":
                 return recovery_response(project_dir)
             elif source in ("startup", "resume"):
-                # Clean stale edit nudge caches
+                # Clean stale session caches
                 from lib.edit_nudge import cleanup_session_cache
                 cleanup_session_cache(project_dir, session_id)
+                cleanup_session_outputs(db, session_id)
 
                 # Health check injection
                 from lib.health import health_summary, format_health_text

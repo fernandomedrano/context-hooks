@@ -3,7 +3,7 @@ import sqlite3
 import hashlib
 import os
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -84,9 +84,23 @@ CREATE TABLE IF NOT EXISTS shared_state (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS output_chunks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now','localtime'))
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
   title, content, reasoning,
   content=knowledge, content_rowid=id
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS output_chunks_fts USING fts5(
+  source, content,
+  content=output_chunks, content_rowid=id
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
@@ -102,6 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_status ON knowledge(status);
 CREATE INDEX IF NOT EXISTS idx_memos_agent_read ON memos(to_agent, read);
 CREATE INDEX IF NOT EXISTS idx_rules_hash ON rule_validations(rule_hash);
 CREATE INDEX IF NOT EXISTS idx_rules_status ON rule_validations(status);
+CREATE INDEX IF NOT EXISTS idx_output_session ON output_chunks(session_id);
 """
 
 
@@ -201,6 +216,9 @@ class ContextDB:
 
         if version < 2:
             self._migrate_v1_to_v2()
+        if version < 3:
+            self._migrate_v2_to_v3()
+        if version < CURRENT_SCHEMA_VERSION:
             self.conn.execute("UPDATE schema_version SET version = ?", (CURRENT_SCHEMA_VERSION,))
             self.conn.commit()
 
@@ -211,6 +229,12 @@ class ContextDB:
         if 'priority' not in cols:
             self.conn.execute("ALTER TABLE memos ADD COLUMN priority TEXT DEFAULT 'normal'")
         # shared_state is handled by CREATE TABLE IF NOT EXISTS in SCHEMA
+        self.conn.commit()
+
+    def _migrate_v2_to_v3(self):
+        """v2 → v3: add output_chunks table + FTS5."""
+        # output_chunks and output_chunks_fts are handled by CREATE TABLE/VIRTUAL TABLE
+        # IF NOT EXISTS in SCHEMA. This method exists for future v3-specific migrations.
         self.conn.commit()
 
     def query(self, sql: str, params: tuple = ()) -> list:

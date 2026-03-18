@@ -23,6 +23,7 @@ case "$CMD" in
   status)     python3 "$SCRIPT_DIR/lib/status.py" "$@" ;;
   prune)      python3 "$SCRIPT_DIR/lib/health.py" prune "$@" ;;
   nudge)      python3 "$SCRIPT_DIR/lib/nudge.py" "$@" ;;
+  search-output) python3 "$SCRIPT_DIR/lib/output_store.py" "$@" ;;
   install)    bash "$SCRIPT_DIR/install.sh" "$@" ;;
   uninstall)  bash "$SCRIPT_DIR/uninstall.sh" "$@" ;;
   mcp)        python3 "$SCRIPT_DIR/lib/mcp_tools.py" "$@" ;;
@@ -43,6 +44,8 @@ Analysis:  xref | health | profile [--days=30]
 
 Knowledge: knowledge store|search|list|promote|archive|restore|dismiss|export
 Memos:     memo send|list|read
+
+Search:    search-output <query> [--sources] [--session=ID]
 
 Maintain:  status | prune [--dry-run] | nudge enable|disable|list
 

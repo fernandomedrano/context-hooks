@@ -350,14 +350,14 @@ class TestToolRegistration:
         from lib.mcp_tools import register_all_tools
         server = MCPServer("test", "0.1")
         register_all_tools(server, self.ctx)
-        assert len(server._tools) == 23
+        assert len(server._tools) == 24
 
     def test_register_with_compat(self):
         from lib.mcp import MCPServer
         from lib.mcp_tools import register_all_tools
         server = MCPServer("test", "0.1")
         register_all_tools(server, self.ctx, compat="agent-bridge")
-        assert len(server._tools) == 37
+        assert len(server._tools) == 38
 
     def test_compat_alias_calls_same_handler(self):
         from lib.mcp import MCPServer

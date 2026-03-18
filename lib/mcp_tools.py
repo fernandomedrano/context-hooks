@@ -396,12 +396,36 @@ def build_handlers(ctx):
             cluster_db.close()
             local_db.close()
 
+    # ── Output search tools ─────────────────────────────────────────────
+
+    # Track search call count per session for progressive throttling
+    _search_call_counts = {}
+
+    def context_search_output(args):
+        from lib.output_store import search_output as _search, list_sources
+        local_db = _open_local_db(ctx)
+        try:
+            session_id = ctx.get("session_id", "unknown")
+            if args.get("list_sources"):
+                sources = list_sources(local_db, session_id)
+                return json.dumps(sources)
+            query = args.get("query", "")
+            if not query:
+                return "Error: query is required"
+            count_key = session_id
+            _search_call_counts[count_key] = _search_call_counts.get(count_key, 0) + 1
+            result = _search(local_db, session_id, query, _search_call_counts[count_key])
+            return json.dumps(result)
+        finally:
+            local_db.close()
+
     handlers["context_query_commits"] = context_query_commits
     handlers["context_check_parity"] = context_check_parity
     handlers["context_run_xref"] = context_run_xref
     handlers["context_get_health"] = context_get_health
     handlers["context_get_profile"] = context_get_profile
     handlers["context_get_project_context"] = context_get_project_context
+    handlers["context_search_output"] = context_search_output
 
     return handlers
 
@@ -460,6 +484,9 @@ TOOL_SCHEMAS = [
      {"type": "object", "properties": {"days": {"type": "integer", "default": 30}}}),
     ("context_get_project_context", "get_context_for_project", "Composite: health + unread memos + recent knowledge",
      {"type": "object", "properties": {"include_health": {"type": "boolean", "default": True}, "include_memos": {"type": "boolean", "default": True}, "include_knowledge": {"type": "boolean", "default": True}, "knowledge_limit": {"type": "integer", "default": 10}}}),
+    # Output search tools
+    ("context_search_output", None, "Search indexed tool outputs (large Bash/Read/Grep results). Progressive throttling applies.",
+     {"type": "object", "properties": {"query": {"type": "string"}, "list_sources": {"type": "boolean", "default": False}}}),
 ]
 
 

@@ -149,12 +149,12 @@ class TestHandleEvent:
         assert result is not None
         assert result["is_commit"] is True
 
-    def test_returns_none_for_normal(self):
+    def test_returns_event_type_for_read(self):
         result = handle_event(
             {"tool_name": "Read", "tool_input": {"file_path": "/a.py"}, "tool_response": {}, "session_id": "s1", "cwd": "/p"},
             self.db, "s1", "/p"
         )
-        assert result is None
+        assert result == {"event_type": "file_read"}
 
     def test_skips_uninteresting(self):
         result = handle_event(

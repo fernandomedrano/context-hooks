@@ -17,6 +17,7 @@ from lib.output_store import (
     index_output, summarize_output, make_source_label,
     get_output_text, cleanup_session_outputs, OUTPUT_THRESHOLD,
 )
+from lib.context_briefing import session_briefing, file_briefing, check_testrun_briefing
 
 
 def handle_hook(hook_type: str, payload: dict) -> str | None:
@@ -68,6 +69,32 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
                     )
                     additional_parts.extend(nudges)
 
+            # If a file was read, surface file intelligence
+            if result and result.get("event_type") == "file_read":
+                file_path = payload.get("tool_input", {}).get("file_path", "")
+                if file_path:
+                    from lib.edit_nudge import load_session_cache, save_session_cache
+                    cache = load_session_cache(project_dir)
+                    profile = load_profile(project_dir)
+                    intel = file_briefing(
+                        file_path, get_cluster_db(), profile, cache, session_id
+                    )
+                    if intel:
+                        additional_parts.extend(intel)
+                        save_session_cache(project_dir, cache)
+
+            # If tests were run, surface failure-class knowledge
+            if result and result.get("event_type") == "test_run":
+                command = payload.get("tool_input", {}).get("command", "")
+                from lib.edit_nudge import load_session_cache, save_session_cache
+                cache = load_session_cache(project_dir)
+                intel = check_testrun_briefing(
+                    command, get_cluster_db(), cache, session_id
+                )
+                if intel:
+                    additional_parts.extend(intel)
+                    save_session_cache(project_dir, cache)
+
             # If a commit was detected, index it and check nudges
             if result and result.get("is_commit"):
                 profile = load_profile(project_dir)
@@ -114,21 +141,28 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
                 # Health check injection
                 from lib.health import health_summary, format_health_text
                 report = health_summary(db, get_cluster_db(), git_root, project_dir, config)
-                if not report:
-                    return None
 
                 result = {}
-                # Critical issues (DB missing, hooks broken) → systemMessage
-                if report.get("critical"):
-                    result["systemMessage"] = (
-                        "CONTEXT-HOOKS HEALTH WARNING:\n"
-                        + "\n".join(report["critical"])
-                    )
-                # Soft warnings (unread memos, bug gaps) → additionalContext
-                if report.get("warnings"):
+                context_lines = []
+
+                if report:
+                    # Critical issues (DB missing, hooks broken) → systemMessage
+                    if report.get("critical"):
+                        result["systemMessage"] = (
+                            "CONTEXT-HOOKS HEALTH WARNING:\n"
+                            + "\n".join(report["critical"])
+                        )
+                    # Soft warnings (unread memos, bug gaps)
+                    if report.get("warnings"):
+                        context_lines.extend(report["warnings"])
+
+                # Project context briefing
+                briefing = session_briefing(db, get_cluster_db(), project_dir, config)
+                context_lines.extend(briefing)
+
+                if context_lines:
                     result["additionalContext"] = (
-                        "Context Hooks:\n"
-                        + "\n".join(report["warnings"])
+                        "Context Hooks:\n" + "\n".join(context_lines)
                     )
                 return json.dumps(result) if result else None
             else:

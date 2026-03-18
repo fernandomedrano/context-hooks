@@ -109,8 +109,8 @@ def handle_event(payload: dict, db, session_id: str, project_dir: str) -> dict |
     if event.get("is_commit"):
         return {"is_commit": True, "cwd": payload.get("cwd", project_dir)}
 
-    # Return event type for file edits so hooks.py can trigger edit nudges
-    if event["event_type"] in ("file_edit", "file_write"):
+    # Return event type for file ops and test runs so hooks.py can trigger context surfacing
+    if event["event_type"] in ("file_edit", "file_write", "file_read", "test_run"):
         return {"event_type": event["event_type"]}
 
     return None

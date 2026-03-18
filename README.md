@@ -45,6 +45,7 @@ Meanwhile, agents working on related projects can't talk to each other. Knowledg
 - **Parallel path detection** -- Discovers files usually edited together (e.g., `chat.py` and `chat_service.py`). Flags when you edit one without the other
 - **Proactive edit nudges** -- When you edit a file, surfaces parity companions, bug history, and relevant knowledge entries in real time
 - **Active nudges (opt-in)** -- Parity warnings on commit, flywheel enforcement
+- **Smart context surfacing** -- On session start: project briefing (parity pairs, recent knowledge, last errors). On file read: bug history, knowledge refs, parity companions. On test run: relevant failure-class knowledge. All automatic, no queries needed
 - **Tool output indexing** -- Large outputs (test results, file reads, grep results) are chunked and FTS5-indexed. The agent gets a tiny summary now and can search the full content on demand. Progressive throttling forces precise queries
 - **Cross-reference report** -- Six-section analysis across MEMORY.md, knowledge store, and commit index
 
@@ -518,7 +519,7 @@ No pip install. No node_modules. No Docker. No external services.
 ## Testing
 
 ```bash
-python3 -m pytest tests/ -q    # 357 tests, runs in ~3 seconds
+python3 -m pytest tests/ -q    # 371 tests, runs in ~3 seconds
 ```
 
 ## Architecture
@@ -545,6 +546,7 @@ lib/                       ── Shared ──
 ├── nudge.py               ← Commit-time parity warnings + flywheel enforcement
 ├── edit_nudge.py          ← Edit-time proactive nudges (parity, bugs, knowledge)
 ├── output_store.py        ← Tool output indexing + FTS5 search + throttling
+├── context_briefing.py    ← Smart context surfacing (session, file, test intel)
 ├── queries.py             ← Query commands (search, parity, stats)
 ├── xref.py                ← Cross-reference report
 │
@@ -553,7 +555,7 @@ lib/                       ── Shared ──
                              (memo operations live in knowledge.py)
 
 adapters/claude-code/      ← Claude Code hook shim
-tests/                     ← One test file per module (357 tests)
+tests/                     ← One test file per module (371 tests)
 ```
 
 The two modules share one SQLite database and one MCP server but have no code dependencies on each other. Git intelligence works without messaging; messaging works without git indexing. Knowledge store is shared -- git intelligence writes failure-class entries and references; messaging routes them across projects.

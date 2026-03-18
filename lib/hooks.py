@@ -12,6 +12,7 @@ from lib.snapshot import build_snapshot, save_snapshot, recovery_response
 from lib.commits import index_commit
 from lib.tags import load_profile
 from lib.nudge import check_parity, check_flywheels
+from lib.edit_nudge import check_edit_nudges
 
 
 def handle_hook(hook_type: str, payload: dict) -> str | None:
@@ -34,6 +35,22 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
     try:
         if hook_type == "event":
             result = handle_event(payload, db, session_id, git_root)
+
+            # If a file was edited/written, check edit-time nudges
+            if result and result.get("event_type") in ("file_edit", "file_write"):
+                file_path = payload.get("tool_input", {}).get("file_path", "")
+                if file_path:
+                    profile = load_profile(project_dir)
+                    nudges = check_edit_nudges(
+                        file_path=file_path,
+                        db=db,
+                        profile=profile,
+                        config=config,
+                        project_data_dir=project_dir,
+                        session_id=session_id,
+                    )
+                    if nudges:
+                        return json.dumps({"additionalContext": "\n".join(nudges)})
 
             # If a commit was detected, index it and check nudges
             if result and result.get("is_commit"):
@@ -75,6 +92,10 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
             if source == "compact":
                 return recovery_response(project_dir)
             elif source in ("startup", "resume"):
+                # Clean stale edit nudge caches
+                from lib.edit_nudge import cleanup_session_cache
+                cleanup_session_cache(project_dir, session_id)
+
                 # Health check injection
                 from lib.health import health_summary, format_health_text
                 report = health_summary(db, get_cluster_db(), git_root, project_dir, config)

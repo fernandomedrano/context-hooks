@@ -126,6 +126,8 @@ def nudge_list(config: dict):
         "parity": "Warn when committing to only one side of a parallel path",
         "flywheel": "Warn when a bug-fix commit has no matching knowledge entry",
         "health-summary": "Show health summary at session start",
+        "edit-hotfile": "Warn when editing a hot file (high churn)",
+        "edit-convention": "Warn when editing a file referenced by a coding convention",
     }
     print("Available nudges:")
     for name, desc in available.items():

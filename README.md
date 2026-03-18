@@ -43,6 +43,7 @@ Existing solutions are either too aggressive (blocking tool calls, redirecting r
 - **MCP server** -- 23 tools exposed via Model Context Protocol. Drop-in replacement for agent-bridge with `--compat` mode
 - **Cross-session memos** -- Messages between agent instances across sessions and projects
 - **Cross-reference report** -- Six-section analysis across MEMORY.md, knowledge store, and commit index
+- **Proactive edit nudges** -- When you edit a file, surfaces parity companions, bug history, and relevant knowledge entries in real time. No more discovering parity misses at commit time
 - **Active nudges (opt-in)** -- Parity warnings on commit, flywheel enforcement
 
 ## Quick Start
@@ -204,7 +205,39 @@ context-hooks memo send --from agent-b --subject "Ready to deploy" \
     --project /path/to/other-repo
 ```
 
-### Workflow 5: Parallel Path Detection
+### Workflow 5: Proactive Edit Nudges
+
+When you edit a file, context-hooks checks it against known patterns and surfaces relevant context before you move on. This catches parity misses, reminds you of bug history, and surfaces relevant knowledge -- all at edit time, not commit time.
+
+```bash
+# You edit src/pipeline.py. The system immediately returns:
+#   "Parity: pipeline.py is usually edited with chat_service.py
+#    (72% co-occurrence). Verify companion was updated."
+#   "Bug history: 3 bug-fix commits touched pipeline.py
+#    (BUG-041, BUG-038). Extra care advised."
+
+# Knowledge entries that reference edited files are surfaced too:
+#   "Knowledge: "streaming responses must flush before return"
+#    (coding-convention) references this file."
+
+# Nudges are deduped per session -- you'll only see each one once.
+# No configuration needed for parity, bug history, and knowledge nudges.
+
+# Optional nudges (enable if you want them):
+context-hooks nudge enable edit-hotfile     # warns on high-churn files
+context-hooks nudge enable edit-convention  # surfaces coding conventions
+```
+
+**Always-on** (high confidence, no config needed):
+- Parity pairs with 60%+ co-occurrence from your git history
+- Files with 2+ bug-fix commits
+- Files referenced by active knowledge entries
+
+**Opt-in** (enable via `nudge enable`):
+- Hot file warnings (high churn from profile)
+- Coding convention reminders (from knowledge store)
+
+### Workflow 6: Parallel Path Detection
 
 The system discovers which files are usually edited together and warns when you miss one.
 
@@ -223,7 +256,7 @@ context-hooks profile
 context-hooks query parity
 ```
 
-### Workflow 6: Compaction Survival
+### Workflow 7: Compaction Survival
 
 When your AI agent's context window fills up and compacts, context-hooks preserves and restores state.
 
@@ -238,7 +271,7 @@ When your AI agent's context window fills up and compacts, context-hooks preserv
 # → The agent continues exactly where it left off
 ```
 
-### Workflow 7: MCP Server (Tool Access for Any Agent)
+### Workflow 8: MCP Server (Tool Access for Any Agent)
 
 Expose context-hooks as an MCP server for any MCP-speaking agent.
 
@@ -333,7 +366,7 @@ Cross-project: add `--project /path/to/repo` to send to another project's databa
 | `context-hooks nudge enable <name>` | Enable a nudge |
 | `context-hooks nudge disable <name>` | Disable a nudge |
 
-Available: `parity`, `flywheel`, `health-summary`
+Available: `parity`, `flywheel`, `health-summary`, `edit-hotfile`, `edit-convention`
 
 ## Configuration
 
@@ -456,7 +489,7 @@ No pip install. No node_modules. No Docker. No external services.
 ## Testing
 
 ```bash
-python3 -m pytest tests/ -q    # 279 tests, runs in ~2 seconds
+python3 -m pytest tests/ -q    # 318 tests, runs in ~3 seconds
 ```
 
 ## Architecture
@@ -475,14 +508,15 @@ lib/
 ├── hooks.py               ← Central hook router
 ├── xref.py                ← Cross-reference report
 ├── health.py              ← Health check + auto-hygiene
-├── nudge.py               ← Parity warnings + flywheel enforcement
+├── nudge.py               ← Commit-time parity warnings + flywheel enforcement
+├── edit_nudge.py          ← Edit-time proactive nudges (parity, bugs, knowledge)
 ├── queries.py             ← Query commands
 ├── status.py              ← Status display
 ├── cluster.py             ← Cross-project routing (join/show/leave)
 ├── mcp.py                 ← JSON-RPC 2.0 MCP protocol shim
 └── mcp_tools.py           ← 23 MCP tool handlers + schemas
 adapters/claude-code/      ← Claude Code hook shim
-tests/                     ← One test file per module (279 tests)
+tests/                     ← One test file per module (318 tests)
 ```
 
 All modules are pure Python with zero external dependencies. Keep it that way.

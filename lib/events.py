@@ -8,6 +8,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def is_test_command(command: str) -> bool:
+    """Check if a bash command is a test runner invocation."""
+    return bool(re.search(r'(pytest|jest|vitest|npm\s+test|pnpm\s+test)', command))
+
+
 def extract_event(payload: dict) -> dict | None:
     """Extract a structured event from a PostToolUse hook payload.
 
@@ -52,7 +57,7 @@ def extract_event(payload: dict) -> dict | None:
             return {"category": "git", "event_type": f"git_{subcmd}", "priority": 2, "data": f"git {subcmd}", "is_commit": is_commit}
 
         # Test commands
-        if re.search(r'(pytest|jest|vitest|npm\s+test|pnpm\s+test)', command):
+        if is_test_command(command):
             return {"category": "test", "event_type": "test_run", "priority": 2, "data": command[:200], "is_commit": False}
 
         # Docker commands

@@ -17,7 +17,63 @@ from lib.output_store import (
     index_output, summarize_output, make_source_label,
     get_output_text, cleanup_session_outputs, OUTPUT_THRESHOLD,
 )
-from lib.context_briefing import session_briefing, file_briefing, check_testrun_briefing
+from lib.context_briefing import session_briefing
+
+
+MEMO_POLL_INTERVAL_CALLS = 10  # poll every N tool calls
+MEMO_POLL_INTERVAL_SECS = 60   # or every N seconds, whichever comes first
+
+
+def _poll_memos(cluster_db, project_dir: str, session_id: str) -> list[str]:
+    """Check for unread memos periodically. Returns nudge lines or []."""
+    from lib.edit_nudge import load_session_cache, save_session_cache
+    import time
+
+    cache = load_session_cache(project_dir)
+    session_cache = cache.setdefault(session_id, [])
+
+    # Track poll state in cache under a special key
+    poll_key = "_memo_poll"
+    poll_state = None
+    for item in session_cache:
+        if isinstance(item, dict) and item.get("type") == poll_key:
+            poll_state = item
+            break
+    if poll_state is None:
+        poll_state = {"type": poll_key, "call_count": 0, "last_poll": time.time(), "last_poll_count": 0}
+        session_cache.append(poll_state)
+
+    poll_state["call_count"] = poll_state.get("call_count", 0) + 1
+    now = time.time()
+    calls_since = poll_state["call_count"] - poll_state.get("last_poll_count", 0)
+    secs_since = now - poll_state.get("last_poll", 0)
+
+    if calls_since < MEMO_POLL_INTERVAL_CALLS and secs_since < MEMO_POLL_INTERVAL_SECS:
+        save_session_cache(project_dir, cache)
+        return []
+
+    # Time to poll
+    poll_state["last_poll"] = now
+    poll_state["last_poll_count"] = poll_state["call_count"]
+    save_session_cache(project_dir, cache)
+
+    # Query unread memos
+    rows = cluster_db.query(
+        "SELECT id, from_agent, subject, content FROM memos WHERE read = 0 ORDER BY id ASC"
+    )
+    if not rows:
+        return []
+
+    lines = [f"📬 {len(rows)} unread memo(s):"]
+    for row in rows[:5]:  # cap at 5 to avoid flooding
+        lines.append(f"  • [{row[0]}] from {row[1]}: {row[2]}")
+        if len(row[3]) > 200:
+            lines.append(f"    {row[3][:200]}...")
+        else:
+            lines.append(f"    {row[3]}")
+    if len(rows) > 5:
+        lines.append(f"  ... and {len(rows) - 5} more. Run: context-hooks memo list --unread")
+    return lines
 
 
 def handle_hook(hook_type: str, payload: dict) -> str | None:
@@ -69,31 +125,10 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
                     )
                     additional_parts.extend(nudges)
 
-            # If a file was read, surface file intelligence
-            if result and result.get("event_type") == "file_read":
-                file_path = payload.get("tool_input", {}).get("file_path", "")
-                if file_path:
-                    from lib.edit_nudge import load_session_cache, save_session_cache
-                    cache = load_session_cache(project_dir)
-                    profile = load_profile(project_dir)
-                    intel = file_briefing(
-                        file_path, get_cluster_db(), profile, cache, session_id
-                    )
-                    if intel:
-                        additional_parts.extend(intel)
-                        save_session_cache(project_dir, cache)
-
-            # If tests were run, surface failure-class knowledge
-            if result and result.get("event_type") == "test_run":
-                command = payload.get("tool_input", {}).get("command", "")
-                from lib.edit_nudge import load_session_cache, save_session_cache
-                cache = load_session_cache(project_dir)
-                intel = check_testrun_briefing(
-                    command, get_cluster_db(), cache, session_id
-                )
-                if intel:
-                    additional_parts.extend(intel)
-                    save_session_cache(project_dir, cache)
+            # NOTE: file_read and test_run intel moved to PreToolUse handler
+            # (lib/pretool.py) — fires BEFORE the tool, so agent has context
+            # while processing, not after. PostToolUse retains output indexing
+            # and edit nudges (which need the tool response).
 
             # If a commit was detected, index it and check nudges
             if result and result.get("is_commit"):
@@ -116,6 +151,10 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
                             get_cluster_db(), config, commit_info.get("tags", "")
                         )
                         additional_parts.extend(flywheel_warn)
+
+            # Periodic memo polling
+            memo_lines = _poll_memos(get_cluster_db(), project_dir, session_id)
+            additional_parts.extend(memo_lines)
 
             if additional_parts:
                 return json.dumps({"additionalContext": "\n".join(additional_parts)})
@@ -167,6 +206,10 @@ def handle_hook(hook_type: str, payload: dict) -> str | None:
                 return json.dumps(result) if result else None
             else:
                 return None
+
+        elif hook_type == "pre-tool-use":
+            from lib.pretool import handle_pretool
+            return handle_pretool(payload)
 
         elif hook_type == "session-end":
             return None  # Placeholder for future session-end logic

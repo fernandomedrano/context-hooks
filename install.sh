@@ -67,6 +67,10 @@ hooks = settings.setdefault("hooks", {})
 
 # Define our hooks
 new_hooks = {
+    "PreToolUse": [{
+        "matcher": "Read|Edit|Write|Bash",
+        "hooks": [{"type": "command", "command": f"bash {shim_path} pre-tool-use", "timeout": 5}]
+    }],
     "PostToolUse": [{
         "matcher": "",
         "hooks": [{"type": "command", "command": f"bash {shim_path} event", "timeout": 5}]
@@ -145,6 +149,25 @@ with open(settings_path, 'w') as f:
 print("  ✓ Hooks merged into", settings_path)
 print("    (existing hooks preserved)")
 PYEOF
+
+    # Inject CLAUDE.md snippet if in a git repo
+    GIT_CHECK=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    SNIPPET="$SCRIPT_DIR/adapters/claude-code/claudemd-snippet.md"
+    if [[ -n "$GIT_CHECK" && -f "$SNIPPET" ]]; then
+      CLAUDE_MD="$GIT_CHECK/CLAUDE.md"
+      if [[ -f "$CLAUDE_MD" ]]; then
+        if ! grep -q "Context Hooks — Agent Intelligence" "$CLAUDE_MD" 2>/dev/null; then
+          echo "" >> "$CLAUDE_MD"
+          cat "$SNIPPET" >> "$CLAUDE_MD"
+          echo "  ✓ Context-hooks section appended to CLAUDE.md"
+        else
+          echo "  ✓ CLAUDE.md already has context-hooks section"
+        fi
+      else
+        cat "$SNIPPET" > "$CLAUDE_MD"
+        echo "  ✓ CLAUDE.md created with context-hooks section"
+      fi
+    fi
 
     # Install slash command
     CMD_DIR="$HOME/.claude/commands"

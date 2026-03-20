@@ -5,20 +5,20 @@ Agent handoff document. Any agent on any tool can pick up from here.
 ## Current Work
 <!-- AGENT: This section is rewritten at every session wrap-up. It is the ground truth for current state. -->
 
-**As of:** 2026-03-18 (session 7)
+**As of:** 2026-03-20 (session 8)
 
-**Where we are:** v0.4+ shipped. Memo polling live — agents get unread memos injected automatically every 10 tool calls. HandNote onboarded (191 commits, cluster joined, agent-bridge migrated). Three projects in KADE cluster. Cross-project flywheel validated end-to-end. 376 tests, 24 MCP tools, schema v3.
+**Where we are:** v0.5 shipped. PreToolUse hook surfaces context BEFORE tool execution — file intel on Read/Edit/Write, failure-class knowledge before test runs. CLAUDE.md snippet auto-injected during install. 388 tests, 24 MCP tools, schema v3. Three projects in KADE cluster.
 
-**Immediate next task:** Validate edit-time proactive nudge in KADE — edit a file with a known parity companion and verify inline warning fires.
+**Immediate next task:** Validate edit-time parity nudge fires proactively in KADE after IDE restart — edit humanizer/__init__.py and verify inline warning.
 
 **Blocked / waiting:**
-- Nothing currently blocked
+- Parity nudge validation blocked on IDE restart (user + KADE agent testing)
 
 **Priority queue:**
-1. Dogfood: validate edit-time nudge fires proactively in KADE
-2. Platform adapters: Gemini CLI, Cursor, VS Code — hook format translation
-3. Task 13: Migration from v1 (import from old DB format + agent-bridge data)
-4. E2E MCP server test with Claude Code via .mcp.json
+1. Dogfood: validate PreToolUse parity nudge in KADE
+2. Fix install.sh --no-bootstrap for non-interactive agents
+3. Platform adapters: Gemini CLI, Cursor, VS Code
+4. Task 13: Migration from v1 (import from old DB format + agent-bridge data)
 
 ---
 
